@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "check-firebase": "tsx scripts/checkFirebaseSetup.ts",
     "seed-db": "tsx scripts/seedDatabase.ts",
-    "cleanup-firebase": "tsx scripts/cleanupFirebase.ts"
+    "cleanup-firebase": "tsx scripts/cleanupFirebase.ts",
+    "setup-zones": "tsx scripts/setupFixedZones.ts",
+    "add-zones": "tsx scripts/addZonesOnly.ts"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",

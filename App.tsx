@@ -181,14 +181,12 @@ const App: React.FC = () => {
         setIsAuthenticated(true);
       } else {
         setIsAuthenticated(false);
-        if (userRole === 'admin') {
-          setUserRole(null);
-        }
+        setUserRole(null); // Remove userRole dependency to avoid loop
       }
     });
 
     return () => unsubscribe();
-  }, [userRole]);
+  }, []); // Empty dependency - only run once on mount
 
   // Initialize Firebase listeners for real-time data
   useEffect(() => {
@@ -230,11 +228,6 @@ const App: React.FC = () => {
     // Listen to announcements in real-time
     const unsubscribeAnnouncements = listenToAnnouncements((updatedAnnouncements) => {
       if (updatedAnnouncements.length > 0) {
-        // Calculate new announcements for public users
-        const newCount = updatedAnnouncements.length - lastSeenAnnouncementCount;
-        if (newCount > 0 && userRole === 'public') {
-          setNewAnnouncementsCount(newCount);
-        }
         setAnnouncements(updatedAnnouncements);
       }
     });
@@ -270,7 +263,7 @@ const App: React.FC = () => {
       unsubscribeVideo();
       unsubscribeComplaints();
     };
-  }, [isInitialized]);
+  }, []); // FIXED: Empty dependency array - only initialize once
 
   // Only simulate zones if no video source is active or analysis is not running
   const [isVideoAnalysisActive, setIsVideoAnalysisActive] = useState(false);
@@ -293,24 +286,20 @@ const App: React.FC = () => {
           density: Math.min(100, Math.max(0, zone.density + (Math.random() * 4 - 2)))
         }));
         
-        // Save updated zones to Firebase
-        saveZones(updatedZones).catch(console.error);
+        // OPTIMIZED: Only save to Firebase every 30 seconds instead of every 5 seconds
+        // This reduces writes by 83% (from 12 per minute to 2 per minute)
+        const now = Date.now();
+        const lastSave = (window as any).__lastZoneSave || 0;
         
-        // Save video metrics for each zone
-        updatedZones.forEach(zone => {
-          saveVideoMetrics({
-            timestamp: new Date().toISOString(),
-            totalPeople: Math.floor(zone.density * 100),
-            crowdDensity: zone.density,
-            avgMovementSpeed: Math.random() * 2,
-            anomalyDetections: zone.density > 80 ? Math.floor(Math.random() * 3) : 0,
-            zoneId: zone.id
-          }).catch(console.error);
-        });
+        if (now - lastSave > 30000) { // 30 seconds
+          (window as any).__lastZoneSave = now;
+          saveZones(updatedZones).catch(console.error);
+          console.log('💾 Zones saved to Firebase (30s interval)');
+        }
         
         return updatedZones;
       });
-    }, 5000);
+    }, 5000); // Still update UI every 5 seconds, but save less frequently
     return () => clearInterval(interval);
   }, [isVideoAnalysisActive]);
 
@@ -360,22 +349,38 @@ const App: React.FC = () => {
     }
   };
 
-  // Save risk score to Firebase whenever it changes
+  // Save risk score to Firebase - OPTIMIZED with debouncing
   useEffect(() => {
     if (riskAssessment.score > 0) {
-      const riskLevel = 
-        riskAssessment.score >= 80 ? 'CRITICAL' :
-        riskAssessment.score >= 60 ? 'HIGH' :
-        riskAssessment.score >= 40 ? 'MODERATE' : 'LOW';
+      // OPTIMIZED: Debounce risk score saves to prevent excessive writes
+      // Only save if score changed significantly (>5 points) or 60 seconds passed
+      const now = Date.now();
+      const lastSaveTime = (window as any).__lastRiskScoreSave || 0;
+      const lastScore = (window as any).__lastRiskScore || 0;
       
-      saveRiskScore({
-        score: riskAssessment.score,
-        level: riskLevel,
-        factors: riskAssessment.factors,
-        timestamp: new Date().toISOString()
-      }).catch(console.error);
+      const scoreDifference = Math.abs(riskAssessment.score - lastScore);
+      const timeSinceLastSave = now - lastSaveTime;
+      
+      // Only save if: score changed by >5 points OR 60 seconds passed
+      if (scoreDifference > 5 || timeSinceLastSave > 60000) {
+        const riskLevel = 
+          riskAssessment.score >= 80 ? 'CRITICAL' :
+          riskAssessment.score >= 60 ? 'HIGH' :
+          riskAssessment.score >= 40 ? 'MODERATE' : 'LOW';
+        
+        saveRiskScore({
+          score: riskAssessment.score,
+          level: riskLevel,
+          factors: riskAssessment.factors,
+          timestamp: new Date().toISOString()
+        }).catch(console.error);
+        
+        (window as any).__lastRiskScoreSave = now;
+        (window as any).__lastRiskScore = riskAssessment.score;
+        console.log('📊 Risk score saved to Firebase');
+      }
     }
-  }, [riskAssessment.score]);
+  }, [riskAssessment.score, riskAssessment.factors]);
 
   // Save event config when it changes
   const [showSavedMessage, setShowSavedMessage] = useState(false);
@@ -1067,10 +1072,10 @@ const App: React.FC = () => {
         <EmergencyOverlay 
           onClose={() => setIsEmergencyActive(false)}
           emergencyConfig={{
-            locationName: eventConfig.locationName,
-            contactPhone: eventConfig.emergencyContactPhone,
-            latitude: eventConfig.latitude,
-            longitude: eventConfig.longitude
+            locationName: emergencyConfig.locationName,
+            contactPhone: emergencyConfig.contactPhone,
+            latitude: emergencyConfig.latitude,
+            longitude: emergencyConfig.longitude
           }}
         />
       )}

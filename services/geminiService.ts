@@ -10,6 +10,48 @@ if (!apiKey) {
 
 const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
+// RATE LIMITING: Track API calls to prevent quota exhaustion
+const API_CALL_TRACKER = {
+  lastCallTime: 0,
+  callCount: 0,
+  resetTime: Date.now()
+};
+
+// OPTIMIZED: Enforce minimum 10 second gap between API calls
+const MIN_API_CALL_INTERVAL = 10000; // 10 seconds
+const MAX_CALLS_PER_MINUTE = 5; // Maximum 5 calls per minute
+
+function canMakeApiCall(): boolean {
+  const now = Date.now();
+  
+  // Reset counter every minute
+  if (now - API_CALL_TRACKER.resetTime > 60000) {
+    API_CALL_TRACKER.callCount = 0;
+    API_CALL_TRACKER.resetTime = now;
+  }
+  
+  // Check if we've exceeded per-minute limit
+  if (API_CALL_TRACKER.callCount >= MAX_CALLS_PER_MINUTE) {
+    console.warn('⚠️ Gemini API rate limit reached (5/min). Skipping call.');
+    return false;
+  }
+  
+  // Check if enough time passed since last call
+  const timeSinceLastCall = now - API_CALL_TRACKER.lastCallTime;
+  if (timeSinceLastCall < MIN_API_CALL_INTERVAL) {
+    console.warn(`⚠️ Gemini API called too soon (${timeSinceLastCall}ms < 10s). Skipping.`);
+    return false;
+  }
+  
+  return true;
+}
+
+function recordApiCall(): void {
+  API_CALL_TRACKER.lastCallTime = Date.now();
+  API_CALL_TRACKER.callCount++;
+  console.log(`📡 Gemini API call ${API_CALL_TRACKER.callCount}/5 this minute`);
+}
+
 // Types for video analysis
 export interface VideoAnalysisResult {
   zones: ZoneMetrics[];
@@ -45,6 +87,13 @@ export interface DetectedIncident {
  * This function now combines frame analysis + live summary in ONE API call (every 5 seconds)
  */
 export async function analyzeVideoFrame(frameData: string): Promise<VideoAnalysisResult> {
+  // RATE LIMITING: Check if we can make this API call
+  if (!canMakeApiCall()) {
+    throw new Error('RATE_LIMIT: API call blocked to prevent quota exhaustion');
+  }
+  
+  recordApiCall(); // Track this API call
+  
   const prompt = `You are analyzing a live video feed from a large public event (Mumbai Music Festival 2024).
   
   CRITICAL: Divide the video frame into a 3x2 GRID (3 columns × 2 rows) to create 6 FIXED ZONES:
@@ -185,6 +234,13 @@ export async function getSituationalSummary(zones: Zone[], incidents: Incident[]
     ? `Based on the following event data, answer this commander query: "${query}". \nData: ${context}`
     : `Generate a concise, professional, actionable situational summary for an event commander. Focus on risks, bottlenecks, and incident status. Data: ${context}`;
 
+  // RATE LIMITING: Check if we can make this API call
+  if (!canMakeApiCall()) {
+    return 'Summary temporarily unavailable due to API rate limiting. Please wait a moment.';
+  }
+  
+  recordApiCall(); // Track this API call
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -240,6 +296,13 @@ STRICT INSTRUCTIONS:
 
 Provide a helpful answer ONLY if it relates to the crowd event.`;
 
+  // RATE LIMITING: Check if we can make this API call
+  if (!canMakeApiCall()) {
+    return 'Chat temporarily unavailable due to API rate limiting. Please wait 10 seconds and try again.';
+  }
+  
+  recordApiCall(); // Track this API call
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -258,6 +321,16 @@ Provide a helpful answer ONLY if it relates to the crowd event.`;
 }
 
 export async function getEmergencyResources(lat: number, lng: number) {
+  // RATE LIMITING: Check if we can make this API call
+  if (!canMakeApiCall()) {
+    return { 
+      text: 'Emergency resource search temporarily rate-limited. Showing fallback emergency contacts.', 
+      sources: [] 
+    };
+  }
+  
+  recordApiCall(); // Track this API call
+  
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",

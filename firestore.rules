@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // ZONES - Fixed structure, only allow updates to specific fields
+    match /zones/{zoneId} {
+      // Allow read for all authenticated users
+      allow read: if isAuthenticated();
+      
+      // Prevent creation and deletion of zones entirely
+      allow create: if false;
+      allow delete: if false;
+      
+      // Only allow updates to density, predictedDensity, and status fields
+      // This allows AI analysis to update zone metrics but not structure
+      allow update: if isAuthenticated() && 
+                       request.resource.data.keys().hasOnly(['id', 'name', 'density', 'predictedDensity', 'status']) &&
+                       request.resource.data.id == resource.data.id &&
+                       request.resource.data.name == resource.data.name;
+    }
+    
+    // INCIDENTS - Full CRUD for authenticated users
+    match /incidents/{incidentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // ANNOUNCEMENTS - Read for all, write for admins only
+    match /announcements/{announcementId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // COMPLAINTS - Users can create, admins can update
+    match /complaints/{complaintId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // VIDEO SOURCES - Admins only
+    match /videoSources/{sourceId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // EVENT CONFIG - Read for all, write for admins only
+    match /eventConfig/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // RISK SCORES - Read for all, write for system/admins
+    match /riskScores/{scoreId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+    
+    // VIDEO METRICS - Read for all, write for system
+    match /videoMetrics/{metricId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+    
+    // USERS - Users can read their own data, admins can read all
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+  }
+}

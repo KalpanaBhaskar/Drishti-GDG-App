@@ -1,0 +1,77 @@
+========================================
+ZONES - QUICK ADD REFERENCE
+========================================
+
+🔗 Firebase Console: https://console.firebase.google.com/project/drishti-database/firestore
+
+⚠️ QUOTA EXCEEDED - Use manual method below
+⏰ Or run "npm run add-zones" after 24 hours
+
+========================================
+COPY-PASTE VALUES FOR EACH ZONE
+========================================
+
+📍 ZONE A (Document ID: zone-a)
+-----------------------------------
+Field: id          Type: string    Value: zone-a
+Field: name        Type: string    Value: Zone A - Main Stage
+Field: density     Type: number    Value: 45
+Field: predictedDensity  Type: number    Value: 50
+Field: status      Type: string    Value: normal
+
+📍 ZONE B (Document ID: zone-b)
+-----------------------------------
+Field: id          Type: string    Value: zone-b
+Field: name        Type: string    Value: Zone B - North Entrance
+Field: density     Type: number    Value: 35
+Field: predictedDensity  Type: number    Value: 40
+Field: status      Type: string    Value: normal
+
+📍 ZONE C (Document ID: zone-c)
+-----------------------------------
+Field: id          Type: string    Value: zone-c
+Field: name        Type: string    Value: Zone C - East Wing
+Field: density     Type: number    Value: 42
+Field: predictedDensity  Type: number    Value: 45
+Field: status      Type: string    Value: normal
+
+📍 ZONE D (Document ID: zone-d)
+-----------------------------------
+Field: id          Type: string    Value: zone-d
+Field: name        Type: string    Value: Zone D - Food Court
+Field: density     Type: number    Value: 55
+Field: predictedDensity  Type: number    Value: 60
+Field: status      Type: string    Value: normal
+
+📍 ZONE E (Document ID: zone-e)
+-----------------------------------
+Field: id          Type: string    Value: zone-e
+Field: name        Type: string    Value: Zone E - VIP Lounge
+Field: density     Type: number    Value: 30
+Field: predictedDensity  Type: number    Value: 32
+Field: status      Type: string    Value: normal
+
+📍 ZONE F (Document ID: zone-f)
+-----------------------------------
+Field: id          Type: string    Value: zone-f
+Field: name        Type: string    Value: Zone F - South Exit
+Field: density     Type: number    Value: 25
+Field: predictedDensity  Type: number    Value: 28
+Field: status      Type: string    Value: normal
+
+========================================
+✅ AFTER ADDING ALL 6 ZONES
+========================================
+Your tactical map should show:
+
+┌─────────┬─────────┬─────────┐
+│ Zone A  │ Zone B  │ Zone C  │
+│  Main   │ North   │  East   │
+│ Stage   │Entrance │  Wing   │
+├─────────┼─────────┼─────────┤
+│ Zone D  │ Zone E  │ Zone F  │
+│  Food   │   VIP   │ South   │
+│ Court   │ Lounge  │  Exit   │
+└─────────┴─────────┴─────────┘
+
+========================================
