@@ -1,0 +1,9 @@
+
+{
+  "name": "Project Drishti",
+  "description": "An AI-powered situational awareness platform for large-scale public event safety, featuring predictive bottleneck analysis, multimodal anomaly detection, and automated resource dispatch.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
