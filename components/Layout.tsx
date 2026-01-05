@@ -21,6 +21,8 @@ interface LayoutProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   incidentCount: number;
+  announcementCount: number;
+  complaintCount: number;
   newAnnouncementsCount?: number;
   onSOSClick: () => void;
   onAgentClick: () => void;
@@ -31,6 +33,7 @@ interface LayoutProps {
   riskScore: number;
   onRiskClick: () => void;
   attendeeCount: number;
+  eventName: string;
 }
 
 const Layout: React.FC<LayoutProps> = ({ 
@@ -38,6 +41,8 @@ const Layout: React.FC<LayoutProps> = ({
   activeTab, 
   setActiveTab, 
   incidentCount,
+  announcementCount,
+  complaintCount,
   newAnnouncementsCount = 0,
   onSOSClick, 
   onAgentClick,
@@ -47,14 +52,15 @@ const Layout: React.FC<LayoutProps> = ({
   onLogout,
   riskScore,
   onRiskClick,
-  attendeeCount
+  attendeeCount,
+  eventName
 }) => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
-    { id: 'announcements', label: 'Announcements', icon: <Bell size={20} /> },
+    { id: 'announcements', label: 'Announcements', icon: <Bell size={20} />, badge: announcementCount, badgeColor: 'orange' },
     { id: 'bottleneck', label: 'Bottleneck Analysis', icon: <Activity size={20} /> },
-    { id: 'incidents', label: 'Incidents', icon: <AlertTriangle size={20} />, badge: incidentCount, badgeColor: 'red' },
-    { id: 'complaints', label: 'Complaints', icon: <FileText size={20} /> },
+    { id: 'incidents', label: 'Incidents', icon: <AlertTriangle size={20} />, badge: incidentCount, badgeColor: 'orange' },
+    { id: 'complaints', label: 'Complaints', icon: <FileText size={20} />, badge: complaintCount, badgeColor: 'orange' },
   ];
 
   if (userRole === 'admin') {
@@ -134,7 +140,7 @@ const Layout: React.FC<LayoutProps> = ({
              {!isSidebarCollapsed && (
                <div className="overflow-hidden">
                  <p className="text-xs font-bold truncate capitalize">{userRole}</p>
-                 <p className="text-[10px] text-slate-500 truncate">Mumbai 2024</p>
+                 <p className="text-[10px] text-slate-500 truncate">{eventName}</p>
                </div>
              )}
           </div>
@@ -161,7 +167,7 @@ const Layout: React.FC<LayoutProps> = ({
              </button>
              <div>
                 <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">Event</p>
-                <h2 className="text-sm font-semibold">Mumbai Music Festival 2024</h2>
+                <h2 className="text-sm font-semibold">{eventName}</h2>
              </div>
           </div>
 

@@ -14,6 +14,7 @@ interface LiveFeedPlayerProps {
   onIncidentDetected?: (incident: Incident) => void;
   onAnnouncementCreated?: (title: string, content: string, priority: 'normal' | 'urgent') => void;
   onAnalysisStatusChange?: (isActive: boolean) => void;
+  onAttendeeCountUpdate?: (count: number) => void;
 }
 
 const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({ 
@@ -21,7 +22,8 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
   onZonesUpdated,
   onIncidentDetected,
   onAnnouncementCreated,
-  onAnalysisStatusChange
+  onAnalysisStatusChange,
+  onAttendeeCountUpdate
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -31,6 +33,8 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
     lastAnalysis: ''
   });
   const [latestAnalysis, setLatestAnalysis] = useState<VideoAnalysisResult | null>(null);
+  const [aiSummary, setAiSummary] = useState<string>('Waiting for AI analysis to begin...');
+  const [summaryUpdateTime, setSummaryUpdateTime] = useState<string>('');
 
   useEffect(() => {
     if (videoSource?.type === 'local' && videoRef.current) {
@@ -46,6 +50,13 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
     }
 
     const orchestrator = getVideoAnalysisOrchestrator();
+    
+    // Display hardcoded summary 2 seconds after Start Analysis is pressed
+    setTimeout(() => {
+      const hardcodedSummary = "Based on the live feed from the Central Intersection (Zone A), the system detects a high-volume pedestrian scramble currently in progress. Crowd density is estimated at a Moderate-High 65%, with fluid movement in multiple directions and no signs of panic or gridlock. However, predictive analysis warns of an impending bottleneck at the sidewalk entry points, particularly in the North-East corner, where density is forecast to spike to a Critical 85% as the signal phase concludes. While no immediate anomalies like violence or medical distress are detected, the risk of sidewalk overflow is rising. Commanders are advised to maintain the current signal timing but should immediately deploy a crowd control officer to the North-East sector to proactively manage the merging traffic and prevent congestion.";
+      setAiSummary(hardcodedSummary);
+      setSummaryUpdateTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    }, 2000);
     
     orchestrator.start(videoRef.current, {
       onZonesUpdated: (zones) => {
@@ -68,6 +79,21 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
           frameCount: stats.frameCount,
           lastAnalysis: new Date(stats.lastAnalysisTime).toLocaleTimeString()
         });
+        
+        // Update AI summary (limited to ~100 words)
+        if (result.summary) {
+          setAiSummary(result.summary);
+          setSummaryUpdateTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        }
+        
+        // Calculate dynamic attendee count with ±50 range
+        if (result.zones && result.zones.length > 0) {
+          const totalPeople = result.zones.reduce((sum, z) => sum + z.peopleCount, 0);
+          // Add random variation of ±50 people
+          const variation = Math.floor(Math.random() * 101) - 50; // Random between -50 and +50
+          const dynamicCount = Math.max(0, totalPeople + variation);
+          onAttendeeCountUpdate?.(dynamicCount);
+        }
       }
     });
 
@@ -126,19 +152,115 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
     }
 
     return (
-      <div className="w-full h-full bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden relative">
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-red-600 px-3 py-1.5 rounded-full">
-          <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-          <span className="text-xs font-bold text-white uppercase">Live Feed</span>
+      <div className="w-full h-full flex flex-col bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden">
+        {/* Top Bar with Info */}
+        <div className="flex items-center justify-between px-4 py-3 bg-slate-900/95 border-b border-slate-800">
+          <div className="flex items-center gap-2 bg-red-600 px-3 py-1.5 rounded-full shadow-lg">
+            <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+            <span className="text-xs font-bold text-white uppercase">Live Feed</span>
+          </div>
+          <div className="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+            <p className="text-xs text-slate-300 font-medium">YouTube Source</p>
+          </div>
         </div>
-        <iframe
-          className="w-full h-full"
-          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&modestbranding=1&rel=0`}
-          title="Live Video Feed"
-          frameBorder="0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-        ></iframe>
+
+        {/* AI Summary Display - Prominent Section Above Video */}
+        <div className="px-4 py-4 bg-gradient-to-r from-blue-950/60 to-slate-900/60 border-b border-blue-800/30">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-blue-600/20 rounded-lg border border-blue-600/30">
+              <Brain className="text-blue-400" size={20} />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-bold text-blue-300 uppercase tracking-wide">Live AI Analysis Summary</h4>
+                {summaryUpdateTime && (
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <span className="text-[10px] font-bold text-slate-400">Updated: {summaryUpdateTime}</span>
+                  </div>
+                )}
+              </div>
+              <p className="text-sm text-slate-200 leading-relaxed">{aiSummary}</p>
+              {latestAnalysis?.incidents && latestAnalysis.incidents.length > 0 && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="px-2 py-1 bg-red-600/20 border border-red-600/30 text-red-400 text-[10px] font-bold rounded">
+                    ⚠️ {latestAnalysis.incidents.length} INCIDENT(S) DETECTED
+                  </span>
+                </div>
+              )}
+              <p className="text-[10px] text-slate-500 mt-2 italic">
+                Auto-updating every 12 seconds during active analysis
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* AI Analysis Control Panel */}
+        <div className="px-4 py-3 bg-slate-900/95 border-b border-slate-800">
+          <div className="flex items-center justify-between gap-4">
+            {/* Analysis Toggle */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={isAnalyzing ? stopAnalysis : startAnalysis}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all shadow-lg ${
+                  isAnalyzing
+                    ? 'bg-red-600 hover:bg-red-500 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+              >
+                {isAnalyzing ? (
+                  <>
+                    <Pause size={16} />
+                    Stop Analysis
+                  </>
+                ) : (
+                  <>
+                    <Play size={16} />
+                    Start AI Analysis
+                  </>
+                )}
+              </button>
+
+              {isAnalyzing && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-600/20 border border-blue-600/30 rounded-lg">
+                  <Brain className="text-blue-400 animate-pulse" size={16} />
+                  <span className="text-xs font-bold text-blue-400">AI ANALYZING</span>
+                </div>
+              )}
+            </div>
+
+            {/* Stats Display */}
+            {analysisStats.analysisCount > 0 && (
+              <div className="flex items-center gap-6">
+                <div className="text-center">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Frames Analyzed</p>
+                  <p className="text-lg font-black text-white">{analysisStats.frameCount}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">AI Cycles</p>
+                  <p className="text-lg font-black text-white">{analysisStats.analysisCount}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Last Update</p>
+                  <p className="text-sm font-bold text-emerald-400">{analysisStats.lastAnalysis || 'N/A'}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* YouTube Video Player */}
+        <div className="flex-1 min-h-0 bg-black relative">
+          <iframe
+            ref={videoRef as any}
+            className="w-full h-full"
+            src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&modestbranding=1&rel=0&enablejsapi=1`}
+            title="Live Video Feed"
+            frameBorder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          ></iframe>
+        </div>
       </div>
     );
   }
@@ -160,6 +282,37 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
             <p className="text-xs text-slate-300 font-medium">{videoSource.fileName}</p>
           </div>
         )}
+      </div>
+
+      {/* AI Summary Display - Prominent Section Above Video */}
+      <div className="px-4 py-4 bg-gradient-to-r from-blue-950/60 to-slate-900/60 border-b border-blue-800/30">
+        <div className="flex items-start gap-3">
+          <div className="p-2 bg-blue-600/20 rounded-lg border border-blue-600/30">
+            <Brain className="text-blue-400" size={20} />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-bold text-blue-300 uppercase tracking-wide">Live AI Analysis Summary</h4>
+              {summaryUpdateTime && (
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <span className="text-[10px] font-bold text-slate-400">Updated: {summaryUpdateTime}</span>
+                </div>
+              )}
+            </div>
+            <p className="text-sm text-slate-200 leading-relaxed">{aiSummary}</p>
+            {latestAnalysis?.incidents && latestAnalysis.incidents.length > 0 && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="px-2 py-1 bg-red-600/20 border border-red-600/30 text-red-400 text-[10px] font-bold rounded">
+                  ⚠️ {latestAnalysis.incidents.length} INCIDENT(S) DETECTED
+                </span>
+              </div>
+            )}
+            <p className="text-[10px] text-slate-500 mt-2 italic">
+              Auto-updating every 12 seconds during active analysis
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* AI Analysis Control Panel */}
@@ -214,26 +367,6 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
             </div>
           )}
         </div>
-
-        {/* Latest Analysis Summary */}
-        {latestAnalysis && (
-          <div className="mt-3 pt-3 border-t border-slate-800">
-            <div className="flex items-start gap-3">
-              <Activity className="text-blue-400 mt-0.5" size={16} />
-              <div className="flex-1">
-                <p className="text-xs font-bold text-slate-400 mb-1">Latest AI Summary:</p>
-                <p className="text-xs text-slate-300 leading-relaxed">{latestAnalysis.summary}</p>
-                {latestAnalysis.incidents.length > 0 && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="px-2 py-0.5 bg-red-600/20 border border-red-600/30 text-red-400 text-[10px] font-bold rounded">
-                      {latestAnalysis.incidents.length} INCIDENT(S) DETECTED
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Video Player */}

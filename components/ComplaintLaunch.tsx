@@ -86,10 +86,9 @@ const ComplaintLaunch: React.FC<ComplaintLaunchProps> = ({
     }
   };
 
-  // Filter complaints based on user role
-  const displayComplaints = isAdmin 
-    ? complaints 
-    : complaints.filter(c => c.submittedBy === userEmail);
+  // Show all complaints to both public and admin users
+  // This ensures transparency and allows everyone to see all complaints and admin responses
+  const displayComplaints = complaints;
 
   return (
     <div className="space-y-6">

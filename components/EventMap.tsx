@@ -6,9 +6,10 @@ import { Zone, Incident } from '../types';
 interface EventMapProps {
   zones: Zone[];
   incidents: Incident[];
+  hasVideoSource?: boolean;
 }
 
-const EventMap: React.FC<EventMapProps> = ({ zones, incidents }) => {
+const EventMap: React.FC<EventMapProps> = ({ zones, incidents, hasVideoSource = false }) => {
   const getZoneColor = (density: number) => {
     if (density >= 80) return 'fill-red-500/80 stroke-red-600';
     if (density >= 60) return 'fill-orange-500/80 stroke-orange-600';
@@ -17,10 +18,12 @@ const EventMap: React.FC<EventMapProps> = ({ zones, incidents }) => {
   };
 
   const getAlertIcon = (zoneId: string) => {
-    const hasCritical = zones.find(z => z.id === zoneId && z.density >= 80);
+    // CRITICAL: Red alert only shows when density STRICTLY > 75% (not >= 75%)
+    const hasCritical = zones.find(z => z.id === zoneId && z.density > 75);
     const hasIncident = incidents.find(i => i.location === zoneId && i.status !== 'resolved');
     
-    if (hasCritical || hasIncident) {
+    // Red alert icon only for critical density (> 75%), not for incidents
+    if (hasCritical) {
       return (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
           <div className="relative">
@@ -34,6 +37,26 @@ const EventMap: React.FC<EventMapProps> = ({ zones, incidents }) => {
     }
     return null;
   };
+
+  // Show blank state if no video source - but show basic map structure
+  if (!hasVideoSource && zones.length === 0) {
+    return (
+      <div className="relative w-full h-full min-h-[500px] bg-slate-900/40 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center p-8">
+        <div className="text-center">
+          <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 mx-auto">
+            <Info size={40} className="text-slate-600" />
+          </div>
+          <h3 className="text-xl font-bold text-slate-300 mb-2">Waiting for Event Data</h3>
+          <p className="text-sm text-slate-500 text-center max-w-md">
+            The tactical map will display zone information once the event begins and AI analysis data is available.
+          </p>
+          <p className="text-xs text-slate-600 mt-4 italic">
+            Check the AI Summary tab for current event status
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full h-full min-h-[500px] bg-slate-900/40 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center p-8">

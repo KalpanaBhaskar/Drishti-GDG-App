@@ -11,9 +11,14 @@ interface EmergencyOverlayProps {
     latitude: number;
     longitude: number;
   };
+  sosMapLinks?: {
+    policeStation: string;
+    hospital: string;
+    fireStation: string;
+  };
 }
 
-const EmergencyOverlay: React.FC<EmergencyOverlayProps> = ({ onClose, emergencyConfig }) => {
+const EmergencyOverlay: React.FC<EmergencyOverlayProps> = ({ onClose, emergencyConfig, sosMapLinks }) => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<{ text: string, sources: any[] }>({ text: '', sources: [] });
 
@@ -137,7 +142,53 @@ const EmergencyOverlay: React.FC<EmergencyOverlayProps> = ({ onClose, emergencyC
           <div className="absolute inset-0 opacity-20 bg-[url('https://api.mapbox.com/styles/v1/mapbox/dark-v10/static/72.8777,19.0760,13/800x800?access_token=pk.xxx')] bg-cover"></div>
           <div className="absolute inset-0 flex flex-col items-center justify-center p-8">
              <div className="w-full space-y-3">
-                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Nearby Resources (G-Maps)</h4>
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Emergency Resources (Admin Configured)</h4>
+                
+                {/* Admin-configured SOS Map Links */}
+                {sosMapLinks && (
+                  <>
+                    <a 
+                      href={sosMapLinks.policeStation} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="flex items-center justify-between p-3 bg-slate-950/90 backdrop-blur border border-slate-800 rounded-lg hover:border-blue-500 transition-colors group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                        <span className="text-xs font-bold text-slate-200">🚔 Police Station</span>
+                      </div>
+                      <ExternalLink size={14} className="text-slate-600 group-hover:text-blue-500" />
+                    </a>
+                    
+                    <a 
+                      href={sosMapLinks.hospital} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="flex items-center justify-between p-3 bg-slate-950/90 backdrop-blur border border-slate-800 rounded-lg hover:border-emerald-500 transition-colors group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <span className="text-xs font-bold text-slate-200">🏥 Hospital / Medical Center</span>
+                      </div>
+                      <ExternalLink size={14} className="text-slate-600 group-hover:text-emerald-500" />
+                    </a>
+                    
+                    <a 
+                      href={sosMapLinks.fireStation} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="flex items-center justify-between p-3 bg-slate-950/90 backdrop-blur border border-slate-800 rounded-lg hover:border-orange-500 transition-colors group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-orange-500"></div>
+                        <span className="text-xs font-bold text-slate-200">🚒 Fire Station</span>
+                      </div>
+                      <ExternalLink size={14} className="text-slate-600 group-hover:text-orange-500" />
+                    </a>
+                  </>
+                )}
+                
+                {/* AI-fetched resources (if available) */}
                 {data.sources.map((chunk, idx) => (
                   <a 
                     key={idx} 
@@ -153,9 +204,6 @@ const EmergencyOverlay: React.FC<EmergencyOverlayProps> = ({ onClose, emergencyC
                     <ExternalLink size={14} className="text-slate-600 group-hover:text-blue-500" />
                   </a>
                 ))}
-                {!loading && data.sources.length === 0 && (
-                   <p className="text-[11px] text-slate-600 text-center">No mapped resources found. Relying on local festival units.</p>
-                )}
              </div>
           </div>
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-slate-950 border border-slate-800 rounded-full shadow-2xl">

@@ -46,16 +46,16 @@ export class VideoFrameProcessor {
     this.isProcessing = true;
     this.frameCount = 0;
 
-    // Process frame immediately
+    // Process frame immediately at 0s
     this.captureFrame();
 
-    // OPTIMIZED: Process every 15 seconds to drastically reduce API calls
-    // This reduces Gemini API calls by 67% (from 12/min to 4/min)
+    // OPTIMIZED: Process every 12 seconds to stay under 10 API calls/min
+    // This gives 5 API calls per minute (0s, 12s, 24s, 36s, 48s)
     this.processingInterval = setInterval(() => {
       this.captureFrame();
-    }, 15000);
+    }, 12000);
 
-    console.log('✅ Video frame processing started (every 15 seconds - optimized for API quota)');
+    console.log('✅ Video frame processing started (every 12 seconds - optimized for API quota)');
   }
 
   /**

@@ -1,0 +1,112 @@
+========================================
+MANUAL ZONE SETUP - FIREBASE CONSOLE
+========================================
+
+Since Firebase quota is exceeded, follow these steps to manually add zones:
+
+STEP 1: Open Firebase Console
+------------------------------
+1. Go to: https://console.firebase.google.com/
+2. Click on project: "drishti-database"
+3. In left menu, click "Firestore Database"
+4. Click on "zones" collection (or create it if it doesn't exist)
+
+STEP 2: Delete All Existing Zones
+----------------------------------
+- If you see any existing zone documents, delete them all
+- Click the 3 dots (...) next to each document
+- Select "Delete document"
+- Confirm deletion
+
+STEP 3: Add Zone A
+-------------------
+1. Click "Add document"
+2. Document ID: zone-a
+3. Add these fields:
+   - Field: id, Type: string, Value: zone-a
+   - Field: name, Type: string, Value: Zone A - Main Stage
+   - Field: density, Type: number, Value: 45
+   - Field: predictedDensity, Type: number, Value: 50
+   - Field: status, Type: string, Value: normal
+4. Click "Save"
+
+STEP 4: Add Zone B
+-------------------
+1. Click "Add document"
+2. Document ID: zone-b
+3. Add these fields:
+   - Field: id, Type: string, Value: zone-b
+   - Field: name, Type: string, Value: Zone B - North Entrance
+   - Field: density, Type: number, Value: 35
+   - Field: predictedDensity, Type: number, Value: 40
+   - Field: status, Type: string, Value: normal
+4. Click "Save"
+
+STEP 5: Add Zone C
+-------------------
+1. Click "Add document"
+2. Document ID: zone-c
+3. Add these fields:
+   - Field: id, Type: string, Value: zone-c
+   - Field: name, Type: string, Value: Zone C - East Wing
+   - Field: density, Type: number, Value: 42
+   - Field: predictedDensity, Type: number, Value: 45
+   - Field: status, Type: string, Value: normal
+4. Click "Save"
+
+STEP 6: Add Zone D
+-------------------
+1. Click "Add document"
+2. Document ID: zone-d
+3. Add these fields:
+   - Field: id, Type: string, Value: zone-d
+   - Field: name, Type: string, Value: Zone D - Food Court
+   - Field: density, Type: number, Value: 55
+   - Field: predictedDensity, Type: number, Value: 60
+   - Field: status, Type: string, Value: normal
+4. Click "Save"
+
+STEP 7: Add Zone E
+-------------------
+1. Click "Add document"
+2. Document ID: zone-e
+3. Add these fields:
+   - Field: id, Type: string, Value: zone-e
+   - Field: name, Type: string, Value: Zone E - VIP Lounge
+   - Field: density, Type: number, Value: 30
+   - Field: predictedDensity, Type: number, Value: 32
+   - Field: status, Type: string, Value: normal
+4. Click "Save"
+
+STEP 8: Add Zone F
+-------------------
+1. Click "Add document"
+2. Document ID: zone-f
+3. Add these fields:
+   - Field: id, Type: string, Value: zone-f
+   - Field: name, Type: string, Value: Zone F - South Exit
+   - Field: density, Type: number, Value: 25
+   - Field: predictedDensity, Type: number, Value: 28
+   - Field: status, Type: string, Value: normal
+4. Click "Save"
+
+VERIFICATION
+------------
+After adding all 6 zones, you should see:
+- zone-a: Zone A - Main Stage
+- zone-b: Zone B - North Entrance
+- zone-c: Zone C - East Wing
+- zone-d: Zone D - Food Court
+- zone-e: Zone E - VIP Lounge
+- zone-f: Zone F - South Exit
+
+The tactical map in your app should now display all 6 zones in a 2x3 grid!
+
+IMPORTANT NOTES:
+----------------
+- Document IDs MUST be exactly: zone-a, zone-b, zone-c, zone-d, zone-e, zone-f
+- All field names are case-sensitive
+- Status must be exactly "normal" (lowercase)
+- Density and predictedDensity are numbers (not strings)
+
+========================================

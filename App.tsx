@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { getSituationalSummary } from './services/geminiService';
 import Layout from './components/Layout';
 import EventMap from './components/EventMap';
 import SituationalSummaryPanel from './components/SituationalSummaryPanel';
@@ -24,6 +25,8 @@ import {
   saveVideoMetrics,
   saveVideoSource,
   deleteVideoSource,
+  deleteAllIncidents,
+  deleteAllAnnouncements,
   addComplaint,
   revokeComplaint,
   addComplaintReply,
@@ -56,7 +59,11 @@ import {
   Eye,
   Settings,
   TrendingUp,
-  Users
+  Users,
+  Brain,
+  Navigation,
+  HeartPulse,
+  Info
 } from 'lucide-react';
 
 const INITIAL_ZONES: Zone[] = [
@@ -68,65 +75,61 @@ const INITIAL_ZONES: Zone[] = [
   { id: 'zone-f', name: 'Zone F', density: 50, predictedDensity: 55, status: 'normal' },
 ];
 
-const INITIAL_INCIDENTS: Incident[] = [
-  { 
-    id: 'INC-001', 
-    type: 'medical', 
-    location: 'zone-b', 
-    status: 'dispatched', 
-    priority: 'high', 
-    timestamp: '14:22', 
-    description: 'Male, 24, reporting heat exhaustion in Zone B.' 
-  },
-  { 
-    id: 'INC-002', 
-    type: 'security', 
-    location: 'zone-c', 
-    status: 'reported', 
-    priority: 'high', 
-    timestamp: '14:35', 
-    description: 'Potential crowd surge detected via Vision API in Zone C.' 
-  },
-  { 
-    id: 'INC-003', 
-    type: 'anomaly', 
-    location: 'zone-a', 
-    status: 'resolved', 
-    priority: 'medium', 
-    timestamp: '13:50', 
-    description: 'Suspicious unattended bag reported in Zone A. Cleared by K9 unit.' 
-  },
-];
-
-const INITIAL_ANNOUNCEMENTS: Announcement[] = [
-  { id: 'ANN-001', title: 'Main Stage Update', content: 'Performance delayed by 15 mins due to technical checks.', timestamp: '14:00', priority: 'normal' },
-  { id: 'ANN-002', title: 'Hydration Alert', content: 'Free water stations now open in South VIP and East Food Plaza.', timestamp: '13:45', priority: 'normal' },
-];
+// NO HARDCODED INCIDENTS OR ANNOUNCEMENTS
+// All data comes from Firebase database - ensures event-specific data integrity
 
 const App: React.FC = () => {
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [zones, setZones] = useState<Zone[]>(INITIAL_ZONES);
-  const [incidents, setIncidents] = useState<Incident[]>(INITIAL_INCIDENTS);
-  const [announcements, setAnnouncements] = useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [attendeeCount, setAttendeeCount] = useState(45280);
+  const [readinessStatus, setReadinessStatus] = useState<'Optimal' | 'Moderate' | 'Low'>('Optimal');
+  const [eventName, setEventName] = useState<string>('Mumbai Music Festival 2024');
+  const [isEditingEventName, setIsEditingEventName] = useState(false);
+  const [tempEventName, setTempEventName] = useState<string>('Mumbai Music Festival 2024');
+  const [sosMapLinks, setSosMapLinks] = useState({
+    policeStation: 'https://maps.google.com/?q=Mumbai+Police+Station',
+    hospital: 'https://maps.google.com/?q=Mumbai+Hospital',
+    fireStation: 'https://maps.google.com/?q=Mumbai+Fire+Station'
+  });
+  
   const [emergencyConfig, setEmergencyConfig] = useState<EmergencyConfig>({
-    locationName: 'Mumbai Central First Aid Hub',
+    locationName: eventName + ' Event Center',
     contactPhone: '+91-9876543210',
     latitude: 19.0760,
     longitude: 72.8777
   });
+
+  // Update emergency config when event name changes
+  useEffect(() => {
+    setEmergencyConfig(prev => ({
+      ...prev,
+      locationName: eventName + ' Event Center'
+    }));
+  }, [eventName]);
 
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isEmergencyActive, setIsEmergencyActive] = useState(false);
   const [isRiskOverlayOpen, setIsRiskOverlayOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [dashboardView, setDashboardView] = useState<'live-feed' | 'tactical-map'>('tactical-map');
+  const [dashboardView, setDashboardView] = useState<'live-feed' | 'tactical-map' | 'ai-summary'>('tactical-map');
+  const [aiSummaryText, setAiSummaryText] = useState<string>('Waiting for AI analysis data...');
+  const [aiSummaryLastUpdate, setAiSummaryLastUpdate] = useState<string>('');
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [videoSource, setVideoSource] = useState<VideoSourceData | null>(null);
+  
+  // Set default view based on user role
+  useEffect(() => {
+    if (userRole === 'public' && !videoSource) {
+      setDashboardView('ai-summary');
+    }
+  }, [userRole, videoSource]);
   const [lastSeenAnnouncementCount, setLastSeenAnnouncementCount] = useState(0);
   const [newAnnouncementsCount, setNewAnnouncementsCount] = useState(0);
   
@@ -136,43 +139,96 @@ const App: React.FC = () => {
 
   // Risk Score Logic
   const riskAssessment = useMemo(() => {
-    const avgDensity = zones.reduce((acc, z) => acc + z.density, 0) / zones.length;
-    const activeHighIncidents = incidents.filter(i => i.status !== 'resolved' && i.priority === 'high').length;
-    const bottleneckPredictions = zones.filter(z => z.predictedDensity >= 75).length;
+    // INPUT 1: Density Percentage (0-100%)
+    const avgDensity = zones.length > 0 
+      ? zones.reduce((acc, z) => acc + z.density, 0) / zones.length 
+      : 0;
+    
+    // INPUT 2: Incident Count (all active incidents, not just high priority)
+    const activeIncidentCount = incidents.filter(i => i.status !== 'resolved').length;
+    
+    // INPUT 3: Bottleneck Count (zones with predicted density >= 75%)
+    const bottleneckCount = zones.filter(z => z.predictedDensity >= 75).length;
+    
+    // INPUT 4: Readiness Status (set by admin or auto-calculated)
+    const currentReadiness = readinessStatus;
 
-    // Formula: Risk = (Avg Density * 0.4) + (High Incidents * 12) + (Bottleneck Preds * 15)
-    const rawScore = (avgDensity * 0.4) + (activeHighIncidents * 12) + (bottleneckPredictions * 15);
-    const finalScore = Math.min(100, rawScore);
+    // === NEW IMPROVED RISK CALCULATION FORMULA ===
+    
+    // STEP 1: Calculate Base Density Score
+    let baseDensityScore = avgDensity;
+    if (avgDensity > 75) {
+      // CRITICAL RULE: Count excess double
+      const excess = avgDensity - 75;
+      baseDensityScore = 75 + (excess * 2);
+    }
+    
+    // STEP 2: Add Incident Penalties (15 points per incident)
+    const incidentPenalty = activeIncidentCount * 15;
+    
+    // STEP 3: Add Bottleneck Penalties (10 points per bottleneck)
+    const bottleneckPenalty = bottleneckCount * 10;
+    
+    // STEP 4: Apply Readiness Modifier
+    let readinessModifier = 0;
+    if (currentReadiness === 'Optimal') {
+      readinessModifier = -10; // Good prep lowers risk
+    } else if (currentReadiness === 'Low') {
+      readinessModifier = 10; // Poor prep increases risk
+    }
+    // 'Moderate' = 0 modifier
+    
+    // STEP 5: Calculate Total Score
+    let totalScore = baseDensityScore + incidentPenalty + bottleneckPenalty + readinessModifier;
+    
+    // STEP 6: Edge Case - Code Red Override
+    if (activeIncidentCount > 5) {
+      totalScore = 100; // Automatic override to maximum risk
+    }
+    
+    // STEP 7: Cap at 100
+    const finalScore = Math.min(100, Math.max(0, totalScore));
 
     const factors = [
       {
         name: 'Crowd Density',
         value: `${Math.round(avgDensity)}% Avg`,
-        impact: avgDensity > 70 ? 'High Severity' : avgDensity > 40 ? 'Moderate' : 'Low',
+        impact: avgDensity > 75 ? 'Critical (2x penalty)' : avgDensity > 60 ? 'High' : avgDensity > 40 ? 'Moderate' : 'Low',
+        contribution: `+${baseDensityScore.toFixed(1)} pts`,
         icon: <Users size={20} />
       },
       {
-        name: 'Critical Incidents',
-        value: `${activeHighIncidents} Active`,
-        impact: activeHighIncidents > 2 ? 'Critical Dispatch' : activeHighIncidents > 0 ? 'Urgent' : 'Nominal',
+        name: 'Active Incidents',
+        value: `${activeIncidentCount} Total`,
+        impact: activeIncidentCount > 5 ? 'CODE RED OVERRIDE' : activeIncidentCount > 3 ? 'Critical' : activeIncidentCount > 0 ? 'Active' : 'None',
+        contribution: `+${incidentPenalty} pts`,
         icon: <AlertTriangle size={20} />
       },
       {
-        name: 'Bottleneck Forecasts',
-        value: `${bottleneckPredictions} Zones`,
-        impact: bottleneckPredictions > 1 ? 'High Risk' : 'Monitoring',
+        name: 'Bottleneck Zones',
+        value: `${bottleneckCount} Congested`,
+        impact: bottleneckCount > 2 ? 'Major Congestion' : bottleneckCount > 0 ? 'Monitor' : 'Clear',
+        contribution: `+${bottleneckPenalty} pts`,
         icon: <TrendingUp size={20} />
       },
       {
-        name: 'Response Readiness',
-        value: 'Optimal',
-        impact: 'Nominal Offset',
+        name: 'Readiness Status',
+        value: currentReadiness,
+        impact: currentReadiness === 'Optimal' ? 'Well Prepared' : currentReadiness === 'Low' ? 'Needs Improvement' : 'Adequate',
+        contribution: readinessModifier > 0 ? `+${readinessModifier} pts` : readinessModifier < 0 ? `${readinessModifier} pts` : '0 pts',
         icon: <Activity size={20} />
       }
     ];
 
-    return { score: finalScore, factors };
-  }, [zones, incidents]);
+    return { 
+      score: finalScore, 
+      factors,
+      density: avgDensity,
+      incidentCount: activeIncidentCount,
+      bottleneckCount: bottleneckCount,
+      readiness: currentReadiness
+    };
+  }, [zones, incidents, readinessStatus]);
 
   // Listen to authentication state changes
   useEffect(() => {
@@ -188,18 +244,46 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []); // Empty dependency - only run once on mount
 
+  // Auto-refresh AI Summary every 10 seconds for AI Summary tab
+  useEffect(() => {
+    const fetchAISummary = async () => {
+      if (zones.length === 0 && incidents.length === 0) {
+        setAiSummaryText('Welcome to the Drishti AI Crowd Safety System. The event monitoring dashboard is ready. AI analysis will begin once the administrator configures a video source and starts live monitoring. Current system status: Standby mode. All safety protocols are active and ready to deploy.');
+        setAiSummaryLastUpdate(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        return;
+      }
+      
+      setIsLoadingSummary(true);
+      try {
+        const summary = await getSituationalSummary(zones, incidents);
+        setAiSummaryText(summary);
+        setAiSummaryLastUpdate(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      } catch (error) {
+        console.error('Error fetching AI summary:', error);
+        setAiSummaryText('Unable to fetch AI summary. Please try again later.');
+      } finally {
+        setIsLoadingSummary(false);
+      }
+    };
+
+    // Initial fetch
+    fetchAISummary();
+
+    // Set up 10-second interval
+    const interval = setInterval(fetchAISummary, 10000);
+
+    return () => clearInterval(interval);
+  }, [zones, incidents]);
+
   // Initialize Firebase listeners for real-time data
   useEffect(() => {
     if (!isInitialized) {
-      // Initialize with default data first time - ensure only 6 zones
-      console.log('🔧 Initializing Firebase with 6 fixed zones...');
-      saveZones(INITIAL_ZONES).then(() => {
-        console.log('✅ 6 fixed zones initialized in Firebase');
-      }).catch(console.error);
+      // CRITICAL: Do NOT initialize with default zones - tactical map must remain empty until video analysis starts
+      console.log('🔧 Initializing Firebase listeners (zones will be populated only from live video analysis)...');
       setIsInitialized(true);
     }
 
-    // Listen to zones in real-time
+    // Listen to zones in real-time - ONLY updated from video analysis
     const unsubscribeZones = listenToZones((updatedZones) => {
       if (updatedZones.length > 0) {
         // Ensure we only use the 6 fixed zones (A-F)
@@ -209,6 +293,7 @@ const App: React.FC = () => {
         
         // If we have exactly 6 zones, use them
         if (validZones.length === 6) {
+          console.log('📍 Zones updated from Firebase (video analysis)');
           setZones(validZones);
         } else if (validZones.length > 6) {
           // Take only the first 6 if there are duplicates
@@ -218,18 +303,18 @@ const App: React.FC = () => {
       }
     });
 
-    // Listen to incidents in real-time
+    // Listen to incidents in real-time - synced to both public and admin dashboards
     const unsubscribeIncidents = listenToIncidents((updatedIncidents) => {
-      if (updatedIncidents.length > 0) {
-        setIncidents(updatedIncidents);
-      }
+      // Always update state, even if empty (important for clearing after video reset)
+      setIncidents(updatedIncidents);
+      console.log(`📋 Incidents updated: ${updatedIncidents.length} total`);
     });
 
-    // Listen to announcements in real-time
+    // Listen to announcements in real-time - synced to both public and admin dashboards
     const unsubscribeAnnouncements = listenToAnnouncements((updatedAnnouncements) => {
-      if (updatedAnnouncements.length > 0) {
-        setAnnouncements(updatedAnnouncements);
-      }
+      // Always update state, even if empty (important for clearing after video reset)
+      setAnnouncements(updatedAnnouncements);
+      console.log(`📢 Announcements updated: ${updatedAnnouncements.length} total`);
     });
 
     // Listen to event config in real-time
@@ -242,6 +327,15 @@ const App: React.FC = () => {
           latitude: config.latitude,
           longitude: config.longitude
         });
+        // Update event name from Firebase
+        if (config.eventName) {
+          setEventName(config.eventName);
+          setTempEventName(config.eventName);
+        }
+        // Update SOS map links from Firebase
+        if (config.sosMapLinks) {
+          setSosMapLinks(config.sosMapLinks);
+        }
       }
     });
 
@@ -265,43 +359,14 @@ const App: React.FC = () => {
     };
   }, []); // FIXED: Empty dependency array - only initialize once
 
-  // Only simulate zones if no video source is active or analysis is not running
+  // Track video analysis status - tactical map ONLY updates from live feed
   const [isVideoAnalysisActive, setIsVideoAnalysisActive] = useState(false);
 
-  useEffect(() => {
-    // Only run simulation if video analysis is not active
-    if (isVideoAnalysisActive) {
-      return; // Skip simulation when AI is analyzing
-    }
-
-    const interval = setInterval(() => {
-      setZones(prev => {
-        // Ensure we only work with 6 fixed zones
-        const validZones = prev.filter(z => 
-          ['zone-a', 'zone-b', 'zone-c', 'zone-d', 'zone-e', 'zone-f'].includes(z.id)
-        ).slice(0, 6);
-        
-        const updatedZones = validZones.map(zone => ({
-          ...zone,
-          density: Math.min(100, Math.max(0, zone.density + (Math.random() * 4 - 2)))
-        }));
-        
-        // OPTIMIZED: Only save to Firebase every 30 seconds instead of every 5 seconds
-        // This reduces writes by 83% (from 12 per minute to 2 per minute)
-        const now = Date.now();
-        const lastSave = (window as any).__lastZoneSave || 0;
-        
-        if (now - lastSave > 30000) { // 30 seconds
-          (window as any).__lastZoneSave = now;
-          saveZones(updatedZones).catch(console.error);
-          console.log('💾 Zones saved to Firebase (30s interval)');
-        }
-        
-        return updatedZones;
-      });
-    }, 5000); // Still update UI every 5 seconds, but save less frequently
-    return () => clearInterval(interval);
-  }, [isVideoAnalysisActive]);
+  // REMOVED: Zone simulation disabled - tactical map only shows data from live video analysis
+  // Zones will only be updated when:
+  // 1. Video analysis is running (via onZonesUpdated callback from LiveFeedPlayer)
+  // 2. Firebase real-time listener receives updates from video analysis
+  // No automatic simulation or random updates
 
   const handleAddAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -392,7 +457,9 @@ const App: React.FC = () => {
         emergencyContactPhone: emergencyConfig.contactPhone,
         locationName: emergencyConfig.locationName,
         latitude: emergencyConfig.latitude,
-        longitude: emergencyConfig.longitude
+        longitude: emergencyConfig.longitude,
+        eventName: eventName,
+        sosMapLinks: sosMapLinks
       });
       
       // Show saved message
@@ -436,6 +503,21 @@ const App: React.FC = () => {
   // Video source handlers
   const handleSaveVideoSource = async (videoData: { type: 'youtube' | 'local'; url: string; fileName?: string }) => {
     try {
+      console.log('🎬 New video source being uploaded - resetting event-specific data...');
+      
+      // STEP 1: Delete all existing incidents and announcements (event-specific data)
+      await Promise.all([
+        deleteAllIncidents(),
+        deleteAllAnnouncements()
+      ]);
+      
+      console.log('✅ Incidents and announcements cleared for new event');
+      
+      // STEP 2: Clear local state immediately
+      setIncidents([]);
+      setAnnouncements([]);
+      
+      // STEP 3: Save the new video source
       const videoSourceData: VideoSourceData = {
         id: `VIDEO-${Date.now()}`,
         type: videoData.type,
@@ -445,6 +527,8 @@ const App: React.FC = () => {
         uploadedBy: 'admin'
       };
       await saveVideoSource(videoSourceData);
+      
+      console.log('✅ New video source saved - ready for fresh event analysis');
     } catch (error) {
       console.error('Error saving video source:', error);
       throw error;
@@ -550,7 +634,7 @@ const App: React.FC = () => {
                </button>
             </div>
 
-            <p className="text-[10px] text-center text-slate-600 uppercase tracking-widest font-black pt-4">Mumbai Music Festival 2024</p>
+            <p className="text-[10px] text-center text-slate-600 uppercase tracking-widest font-black pt-4">{eventName}</p>
           </div>
         </div>
 
@@ -561,6 +645,7 @@ const App: React.FC = () => {
             onAuthSuccess={handleAuthSuccess}
             onSignUp={handleSignUp}
             onSignIn={handleSignIn}
+            eventName={eventName}
           />
         )}
       </>
@@ -572,22 +657,24 @@ const App: React.FC = () => {
       case 'dashboard':
         return (
           <div className="flex flex-col h-full bg-slate-950 overflow-hidden">
-            {/* Dashboard Tabs */}
+            {/* Dashboard Tabs - Live Feed for admin only, AI Summary for public only */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
               <div className="flex items-center gap-2 bg-slate-900 rounded-lg p-1 border border-slate-800">
-                <button
-                  onClick={() => setDashboardView('live-feed')}
-                  className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${
-                    dashboardView === 'live-feed'
-                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${dashboardView === 'live-feed' ? 'bg-red-500 animate-pulse' : 'bg-slate-600'}`}></div>
-                    Live Feed
-                  </div>
-                </button>
+                {userRole === 'admin' && (
+                  <button
+                    onClick={() => setDashboardView('live-feed')}
+                    className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${
+                      dashboardView === 'live-feed'
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${dashboardView === 'live-feed' ? 'bg-red-500 animate-pulse' : 'bg-slate-600'}`}></div>
+                      Live Feed
+                    </div>
+                  </button>
+                )}
                 <button
                   onClick={() => setDashboardView('tactical-map')}
                   className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${
@@ -601,9 +688,22 @@ const App: React.FC = () => {
                     Tactical Map
                   </div>
                 </button>
+                <button
+                  onClick={() => setDashboardView('ai-summary')}
+                  className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${
+                    dashboardView === 'ai-summary'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Brain size={16} />
+                    AI Summary
+                  </div>
+                </button>
               </div>
               
-              {dashboardView === 'live-feed' && videoSource && (
+              {dashboardView === 'live-feed' && videoSource && userRole === 'admin' && (
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 rounded-lg border border-slate-800">
                   <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
                   <span className="text-xs font-bold text-slate-400 uppercase">
@@ -615,7 +715,7 @@ const App: React.FC = () => {
 
             {/* Dashboard Content */}
             <div className="flex-1 min-h-0 p-6 overflow-auto">
-              {dashboardView === 'live-feed' ? (
+              {dashboardView === 'live-feed' && userRole === 'admin' ? (
                 <LiveFeedPlayer 
                   videoSource={videoSource}
                   onZonesUpdated={(updatedZones) => {
@@ -639,9 +739,100 @@ const App: React.FC = () => {
                     console.log('📊 Video analysis status:', isActive ? 'ACTIVE' : 'STOPPED');
                     setIsVideoAnalysisActive(isActive);
                   }}
+                  onAttendeeCountUpdate={(count) => {
+                    console.log('👥 Attendee count updated:', count);
+                    setAttendeeCount(count);
+                  }}
                 />
+              ) : dashboardView === 'live-feed' && userRole === 'public' ? (
+                <div className="w-full h-full bg-slate-900/40 border border-slate-800 rounded-2xl flex flex-col items-center justify-center p-12">
+                  <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6">
+                    <Lock size={40} className="text-slate-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-300 mb-2">Live Feed Not Available</h3>
+                  <p className="text-sm text-slate-500 text-center max-w-md">
+                    Live video feed access is restricted to admin accounts only. Please use the Tactical Map for real-time crowd monitoring.
+                  </p>
+                </div>
+              ) : dashboardView === 'ai-summary' ? (
+                <div className="w-full h-full bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
+                  {/* AI Summary Header */}
+                  <div className="px-6 py-4 bg-gradient-to-r from-blue-950/60 to-slate-900/60 border-b border-blue-800/30">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3 bg-blue-600/20 rounded-lg border border-blue-600/30">
+                          <Brain className="text-blue-400" size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold text-blue-300 uppercase tracking-wide">AI Analysis Summary</h3>
+                          <p className="text-xs text-slate-400 mt-0.5">Live situational awareness powered by Gemini AI</p>
+                        </div>
+                      </div>
+                      {aiSummaryLastUpdate && (
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 rounded-lg border border-slate-700">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                          <span className="text-xs font-bold text-slate-300">Updated: {aiSummaryLastUpdate}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* AI Summary Content */}
+                  <div className="flex-1 overflow-auto p-6">
+                    <div className="prose prose-invert prose-lg max-w-none">
+                      <div className="bg-slate-800/30 rounded-xl p-6 border border-slate-700/50">
+                        {aiSummaryText.split('\n').map((line, i) => (
+                          <p key={i} className="mb-3 leading-relaxed text-base text-slate-200">
+                            {line.startsWith('#') ? (
+                              <strong className="text-blue-300 text-lg">{line.replace(/^#+\s*/, '')}</strong>
+                            ) : line.startsWith('-') || line.startsWith('*') ? (
+                              <span className="block pl-6 relative">
+                                <span className="absolute left-2 text-blue-400">•</span>
+                                {line.replace(/^[-*]\s*/, '')}
+                              </span>
+                            ) : line.startsWith('**') ? (
+                              <strong className="text-slate-100">{line.replace(/\*\*/g, '')}</strong>
+                            ) : (
+                              line
+                            )}
+                          </p>
+                        ))}
+                      </div>
+                      
+                      {/* Metrics Display */}
+                      <div className="grid grid-cols-3 gap-4 mt-6">
+                        <div className="bg-slate-800/40 rounded-lg p-4 border border-slate-700/50 text-center">
+                          <p className="text-xs text-slate-500 font-bold uppercase mb-1">Total Zones</p>
+                          <p className="text-2xl font-black text-white">{zones.length || 0}</p>
+                        </div>
+                        <div className="bg-slate-800/40 rounded-lg p-4 border border-slate-700/50 text-center">
+                          <p className="text-xs text-slate-500 font-bold uppercase mb-1">Active Incidents</p>
+                          <p className="text-2xl font-black text-red-400">{incidents.filter(i => i.status !== 'resolved').length}</p>
+                        </div>
+                        <div className="bg-slate-800/40 rounded-lg p-4 border border-slate-700/50 text-center">
+                          <p className="text-xs text-slate-500 font-bold uppercase mb-1">Risk Score</p>
+                          <p className="text-2xl font-black text-amber-400">{riskAssessment.score.toFixed(1)}</p>
+                        </div>
+                      </div>
+
+                      {zones.length > 0 && (
+                        <p className="text-xs text-slate-500 mt-6 text-center italic">
+                          Auto-updating every 10 seconds with live event data
+                        </p>
+                      )}
+                      
+                      {zones.length === 0 && (
+                        <div className="mt-6 p-4 bg-blue-900/20 border border-blue-800/30 rounded-lg">
+                          <p className="text-xs text-blue-300 text-center">
+                            💡 System is ready. Waiting for administrator to begin live monitoring.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               ) : (
-                <EventMap zones={zones} incidents={incidents} />
+                <EventMap zones={zones} incidents={incidents} hasVideoSource={videoSource !== null} />
               )}
             </div>
           </div>
@@ -737,6 +928,67 @@ const App: React.FC = () => {
                   <p className="text-xs text-slate-500">Forecasting crowd flow using Vertex AI Forecasting.</p>
                 </div>
               </div>
+
+              {/* Readiness Status Control - Affects Risk Score */}
+              {userRole === 'admin' && (
+                <div className="mb-6 p-4 bg-slate-900/60 border border-slate-800 rounded-xl">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-300">Event Readiness Status</h3>
+                      <p className="text-xs text-slate-500 mt-1">Controls risk score modifier (±10 points)</p>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                      <Activity size={14} />
+                      <span>4th Parameter</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setReadinessStatus('Optimal')}
+                      className={`flex-1 px-4 py-3 rounded-lg font-bold text-sm transition-all border-2 ${
+                        readinessStatus === 'Optimal'
+                          ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg'
+                          : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="text-center">
+                        <div className="text-base">✓ Optimal</div>
+                        <div className="text-[10px] opacity-70 mt-1">-10 pts</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => setReadinessStatus('Moderate')}
+                      className={`flex-1 px-4 py-3 rounded-lg font-bold text-sm transition-all border-2 ${
+                        readinessStatus === 'Moderate'
+                          ? 'bg-amber-600 border-amber-500 text-white shadow-lg'
+                          : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="text-center">
+                        <div className="text-base">⚠ Moderate</div>
+                        <div className="text-[10px] opacity-70 mt-1">0 pts</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => setReadinessStatus('Low')}
+                      className={`flex-1 px-4 py-3 rounded-lg font-bold text-sm transition-all border-2 ${
+                        readinessStatus === 'Low'
+                          ? 'bg-red-600 border-red-500 text-white shadow-lg'
+                          : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="text-center">
+                        <div className="text-base">✗ Low</div>
+                        <div className="text-[10px] opacity-70 mt-1">+10 pts</div>
+                      </div>
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-3 italic text-center">
+                    Current status: <span className="text-slate-400 font-bold">{readinessStatus}</span> - 
+                    Reflects preparedness level (staff, equipment, response capability)
+                  </p>
+                </div>
+              )}
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {zones.map(zone => (
@@ -922,6 +1174,49 @@ const App: React.FC = () => {
                 </div>
              </div>
 
+             {/* Event Name Configuration */}
+             <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-6">
+               <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                 <Edit2 size={18} className="text-blue-500" />
+                 Event Name Configuration
+               </h3>
+               <p className="text-xs text-slate-500 mb-4">This name will be displayed throughout the application</p>
+               
+               <div className="space-y-3">
+                 <label className="text-sm font-bold text-slate-300">Event Name</label>
+                 <input
+                   type="text"
+                   value={tempEventName}
+                   onChange={(e) => setTempEventName(e.target.value)}
+                   className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                   placeholder="e.g., Mumbai Music Festival 2024"
+                 />
+                 <button
+                   onClick={async () => {
+                     try {
+                       setEventName(tempEventName);
+                       await saveEventConfig({
+                         attendeeCount,
+                         emergencyContactPhone: emergencyConfig.contactPhone,
+                         locationName: emergencyConfig.locationName,
+                         latitude: emergencyConfig.latitude,
+                         longitude: emergencyConfig.longitude,
+                         eventName: tempEventName,
+                         sosMapLinks: sosMapLinks
+                       });
+                       alert('Event name updated successfully!');
+                     } catch (error) {
+                       console.error('Error saving event name:', error);
+                       alert('Failed to save event name');
+                     }
+                   }}
+                   className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-colors"
+                 >
+                   Save Event Name
+                 </button>
+               </div>
+             </div>
+
              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Attendee Management Section */}
                 <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-8 shadow-xl space-y-6">
@@ -998,6 +1293,92 @@ const App: React.FC = () => {
                 </div>
              </div>
 
+             {/* Emergency Locations (Google Maps Links) */}
+             <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-6">
+               <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                 <Navigation size={18} className="text-red-500" />
+                 Emergency Locations
+               </h3>
+               <p className="text-xs text-slate-500 mb-4">Configure Google Maps links for emergency resources near your event</p>
+               
+               <div className="space-y-4">
+                 {/* Police Station Link */}
+                 <div>
+                   <label className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">
+                     <Phone size={14} className="text-blue-500" />
+                     Police Station Map Link
+                   </label>
+                   <input
+                     type="url"
+                     value={sosMapLinks.policeStation}
+                     onChange={(e) => setSosMapLinks(prev => ({ ...prev, policeStation: e.target.value }))}
+                     className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     placeholder="https://maps.google.com/?q=..."
+                   />
+                 </div>
+
+                 {/* Hospital Link */}
+                 <div>
+                   <label className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">
+                     <HeartPulse size={14} className="text-emerald-500" />
+                     Hospital/Medical Center Map Link
+                   </label>
+                   <input
+                     type="url"
+                     value={sosMapLinks.hospital}
+                     onChange={(e) => setSosMapLinks(prev => ({ ...prev, hospital: e.target.value }))}
+                     className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                     placeholder="https://maps.google.com/?q=..."
+                   />
+                 </div>
+
+                 {/* Fire Station Link */}
+                 <div>
+                   <label className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">
+                     <Siren size={14} className="text-orange-500" />
+                     Fire Station Map Link
+                   </label>
+                   <input
+                     type="url"
+                     value={sosMapLinks.fireStation}
+                     onChange={(e) => setSosMapLinks(prev => ({ ...prev, fireStation: e.target.value }))}
+                     className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                     placeholder="https://maps.google.com/?q=..."
+                   />
+                 </div>
+
+                 <button
+                   onClick={async () => {
+                     try {
+                       await saveEventConfig({
+                         attendeeCount,
+                         emergencyContactPhone: emergencyConfig.contactPhone,
+                         locationName: emergencyConfig.locationName,
+                         latitude: emergencyConfig.latitude,
+                         longitude: emergencyConfig.longitude,
+                         eventName: eventName,
+                         sosMapLinks: sosMapLinks
+                       });
+                       alert('Emergency locations updated successfully! These will now appear in the SOS page.');
+                     } catch (error) {
+                       console.error('Error saving emergency locations:', error);
+                       alert('Failed to save emergency locations');
+                     }
+                   }}
+                   className="w-full px-6 py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg transition-colors"
+                 >
+                   Save Emergency Locations
+                 </button>
+
+                 <div className="mt-4 p-4 bg-blue-900/20 border border-blue-800/30 rounded-lg">
+                   <p className="text-xs text-blue-300 flex items-center gap-2">
+                     <Info size={14} />
+                     Tip: Right-click on Google Maps location and select "Share" to get the link
+                   </p>
+                 </div>
+               </div>
+             </div>
+
              {/* Video Input Management */}
              <VideoInputManager 
                onSave={handleSaveVideoSource}
@@ -1023,6 +1404,147 @@ const App: React.FC = () => {
           </div>
         );
 
+      case 'settings':
+        return (
+          <div className="space-y-6 pb-8 overflow-auto h-full">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">Admin Settings</h2>
+                <p className="text-sm text-slate-500 mt-1">Configure event details and emergency resources</p>
+              </div>
+            </div>
+
+            {/* Event Name Configuration */}
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Edit2 size={18} className="text-blue-500" />
+                Event Name Configuration
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">This name will be displayed throughout the application</p>
+              
+              <div className="space-y-3">
+                <label className="text-sm font-bold text-slate-300">Event Name</label>
+                <input
+                  type="text"
+                  value={tempEventName}
+                  onChange={(e) => setTempEventName(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g., Mumbai Music Festival 2024"
+                />
+                <button
+                  onClick={async () => {
+                    try {
+                      setEventName(tempEventName);
+                      await saveEventConfig({
+                        attendeeCount,
+                        emergencyContactPhone: emergencyConfig.contactPhone,
+                        locationName: emergencyConfig.locationName,
+                        latitude: emergencyConfig.latitude,
+                        longitude: emergencyConfig.longitude,
+                        eventName: tempEventName,
+                        sosMapLinks: sosMapLinks
+                      });
+                      alert('Event name updated successfully!');
+                    } catch (error) {
+                      console.error('Error saving event name:', error);
+                      alert('Failed to save event name');
+                    }
+                  }}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-colors"
+                >
+                  Save Event Name
+                </button>
+              </div>
+            </div>
+
+            {/* SOS Map Links Configuration */}
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Navigation size={18} className="text-red-500" />
+                SOS Emergency Map Links
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">Configure Google Maps links for emergency resources near your event</p>
+              
+              <div className="space-y-4">
+                {/* Police Station Link */}
+                <div>
+                  <label className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">
+                    <Phone size={14} className="text-blue-500" />
+                    Police Station Map Link
+                  </label>
+                  <input
+                    type="url"
+                    value={sosMapLinks.policeStation}
+                    onChange={(e) => setSosMapLinks(prev => ({ ...prev, policeStation: e.target.value }))}
+                    className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="https://maps.google.com/?q=..."
+                  />
+                </div>
+
+                {/* Hospital Link */}
+                <div>
+                  <label className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">
+                    <HeartPulse size={14} className="text-emerald-500" />
+                    Hospital/Medical Center Map Link
+                  </label>
+                  <input
+                    type="url"
+                    value={sosMapLinks.hospital}
+                    onChange={(e) => setSosMapLinks(prev => ({ ...prev, hospital: e.target.value }))}
+                    className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    placeholder="https://maps.google.com/?q=..."
+                  />
+                </div>
+
+                {/* Fire Station Link */}
+                <div>
+                  <label className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-2">
+                    <Siren size={14} className="text-orange-500" />
+                    Fire Station Map Link
+                  </label>
+                  <input
+                    type="url"
+                    value={sosMapLinks.fireStation}
+                    onChange={(e) => setSosMapLinks(prev => ({ ...prev, fireStation: e.target.value }))}
+                    className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    placeholder="https://maps.google.com/?q=..."
+                  />
+                </div>
+
+                <button
+                  onClick={async () => {
+                    try {
+                      await saveEventConfig({
+                        attendeeCount,
+                        emergencyContactPhone: emergencyConfig.contactPhone,
+                        locationName: emergencyConfig.locationName,
+                        latitude: emergencyConfig.latitude,
+                        longitude: emergencyConfig.longitude,
+                        eventName: eventName,
+                        sosMapLinks: sosMapLinks
+                      });
+                      alert('SOS map links updated successfully! These will now appear in the emergency overlay.');
+                    } catch (error) {
+                      console.error('Error saving SOS map links:', error);
+                      alert('Failed to save SOS map links');
+                    }
+                  }}
+                  className="w-full px-6 py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg transition-colors"
+                >
+                  Save SOS Map Links
+                </button>
+
+                <div className="mt-4 p-4 bg-blue-900/20 border border-blue-800/30 rounded-lg">
+                  <p className="text-xs text-blue-300 flex items-center gap-2">
+                    <Info size={14} />
+                    Tip: Right-click on Google Maps location and select "Share" to get the link
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
       default:
         return <div className="text-center py-20 text-slate-500">Module under development.</div>;
     }
@@ -1036,6 +1558,8 @@ const App: React.FC = () => {
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
         incidentCount={incidents.filter(i => i.status !== 'resolved').length}
+        announcementCount={announcements.length}
+        complaintCount={complaints.filter(c => c.status !== 'resolved' && c.status !== 'revoked').length}
         newAnnouncementsCount={newAnnouncementsCount}
         onSOSClick={() => setIsEmergencyActive(true)}
         onAgentClick={() => setIsSummaryOpen(!isSummaryOpen)}
@@ -1044,6 +1568,7 @@ const App: React.FC = () => {
         riskScore={riskAssessment.score}
         onRiskClick={() => setIsRiskOverlayOpen(true)}
         attendeeCount={attendeeCount}
+        eventName={eventName}
       >
         {renderContent()}
       </Layout>
@@ -1062,7 +1587,14 @@ const App: React.FC = () => {
             </button>
           </div>
           <div className="flex-1 overflow-hidden rounded-xl border border-slate-800 shadow-inner">
-             <SituationalSummaryPanel zones={zones} incidents={incidents} />
+             <SituationalSummaryPanel 
+               zones={zones} 
+               incidents={incidents} 
+               announcements={announcements}
+               riskScore={riskAssessment.score}
+               attendeeCount={attendeeCount}
+               sosActive={isEmergencyActive}
+             />
           </div>
         </div>
       </div>
@@ -1077,6 +1609,7 @@ const App: React.FC = () => {
             latitude: emergencyConfig.latitude,
             longitude: emergencyConfig.longitude
           }}
+          sosMapLinks={sosMapLinks}
         />
       )}
 

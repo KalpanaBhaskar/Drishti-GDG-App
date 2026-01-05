@@ -6,9 +6,10 @@ interface AuthModalProps {
   onAuthSuccess: () => void;
   onSignUp: (email: string, password: string) => Promise<void>;
   onSignIn: (email: string, password: string) => Promise<void>;
+  eventName: string;
 }
 
-const AuthModal: React.FC<AuthModalProps> = ({ onClose, onAuthSuccess, onSignUp, onSignIn }) => {
+const AuthModal: React.FC<AuthModalProps> = ({ onClose, onAuthSuccess, onSignUp, onSignIn, eventName }) => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -185,7 +186,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose, onAuthSuccess, onSignUp,
         {/* Footer */}
         <div className="px-6 py-4 bg-slate-950/50 border-t border-slate-800">
           <p className="text-[10px] text-center text-slate-600 uppercase tracking-widest font-bold">
-            Mumbai Music Festival 2024 • Secure Access
+            {eventName} • Secure Access
           </p>
         </div>
       </div>

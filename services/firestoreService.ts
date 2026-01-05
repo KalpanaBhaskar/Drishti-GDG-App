@@ -204,6 +204,21 @@ export const listenToIncidents = (callback: (incidents: Incident[]) => void) => 
   });
 };
 
+/**
+ * Delete all incidents - Used when resetting for a new event video
+ */
+export const deleteAllIncidents = async (): Promise<void> => {
+  try {
+    const querySnapshot = await getDocs(collection(db, COLLECTIONS.INCIDENTS));
+    const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
+    await Promise.all(deletePromises);
+    console.log(`🗑️ Deleted ${querySnapshot.size} incidents from database`);
+  } catch (error) {
+    console.error('Error deleting all incidents:', error);
+    throw error;
+  }
+};
+
 // ============= ANNOUNCEMENTS =============
 
 /**
@@ -268,6 +283,21 @@ export const listenToAnnouncements = (callback: (announcements: Announcement[]) 
     });
     callback(announcements);
   });
+};
+
+/**
+ * Delete all announcements - Used when resetting for a new event video
+ */
+export const deleteAllAnnouncements = async (): Promise<void> => {
+  try {
+    const querySnapshot = await getDocs(collection(db, COLLECTIONS.ANNOUNCEMENTS));
+    const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
+    await Promise.all(deletePromises);
+    console.log(`🗑️ Deleted ${querySnapshot.size} announcements from database`);
+  } catch (error) {
+    console.error('Error deleting all announcements:', error);
+    throw error;
+  }
 };
 
 // ============= METRICS =============
@@ -388,6 +418,12 @@ export interface EventConfig {
   locationName: string;
   latitude: number;
   longitude: number;
+  eventName?: string;
+  sosMapLinks?: {
+    policeStation: string;
+    hospital: string;
+    fireStation: string;
+  };
 }
 
 /**
@@ -421,7 +457,9 @@ export const getEventConfig = async (): Promise<EventConfig | null> => {
         emergencyContactPhone: data.emergencyContactPhone,
         locationName: data.locationName,
         latitude: data.latitude,
-        longitude: data.longitude
+        longitude: data.longitude,
+        eventName: data.eventName,
+        sosMapLinks: data.sosMapLinks
       };
     }
     return null;
@@ -444,7 +482,9 @@ export const listenToEventConfig = (callback: (config: EventConfig | null) => vo
         emergencyContactPhone: data.emergencyContactPhone,
         locationName: data.locationName,
         latitude: data.latitude,
-        longitude: data.longitude
+        longitude: data.longitude,
+        eventName: data.eventName,
+        sosMapLinks: data.sosMapLinks
       });
     } else {
       callback(null);

@@ -2,7 +2,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { Zone, Incident } from "../types";
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
 
 if (!apiKey) {
   console.error('⚠️ VITE_GEMINI_API_KEY not found in environment variables');
@@ -17,9 +17,9 @@ const API_CALL_TRACKER = {
   resetTime: Date.now()
 };
 
-// OPTIMIZED: Enforce minimum 10 second gap between API calls
-const MIN_API_CALL_INTERVAL = 10000; // 10 seconds
-const MAX_CALLS_PER_MINUTE = 5; // Maximum 5 calls per minute
+// OPTIMIZED: Enforce minimum 12 second gap between API calls to ensure <10 calls/min
+const MIN_API_CALL_INTERVAL = 12000; // 12 seconds
+const MAX_CALLS_PER_MINUTE = 12; // Maximum 5 calls per minute
 
 function canMakeApiCall(): boolean {
   const now = Date.now();
@@ -39,7 +39,7 @@ function canMakeApiCall(): boolean {
   // Check if enough time passed since last call
   const timeSinceLastCall = now - API_CALL_TRACKER.lastCallTime;
   if (timeSinceLastCall < MIN_API_CALL_INTERVAL) {
-    console.warn(`⚠️ Gemini API called too soon (${timeSinceLastCall}ms < 10s). Skipping.`);
+    console.warn(`⚠️ Gemini API called too soon (${timeSinceLastCall}ms < 12s). Skipping.`);
     return false;
   }
   
@@ -84,7 +84,7 @@ export interface DetectedIncident {
 
 /**
  * Analyze video frame using Gemini 2.5 Flash with vision capabilities
- * This function now combines frame analysis + live summary in ONE API call (every 5 seconds)
+ * This function now combines frame analysis + live summary in ONE API call (every 12 seconds)
  */
 export async function analyzeVideoFrame(frameData: string): Promise<VideoAnalysisResult> {
   // RATE LIMITING: Check if we can make this API call
@@ -94,7 +94,7 @@ export async function analyzeVideoFrame(frameData: string): Promise<VideoAnalysi
   
   recordApiCall(); // Track this API call
   
-  const prompt = `You are analyzing a live video feed from a large public event (Mumbai Music Festival 2024).
+  const prompt = `You are analyzing a live video feed from a large public event .
   
   CRITICAL: Divide the video frame into a 3x2 GRID (3 columns × 2 rows) to create 6 FIXED ZONES:
   
@@ -259,6 +259,7 @@ export async function getSituationalSummary(zones: Zone[], incidents: Incident[]
 /**
  * Chatbot for answering user questions about the event
  * STRICTLY RESTRICTED to crowd event details only
+ * Uses global rate limiter - no user-specific limits
  */
 export async function chatWithDrishti(
   userMessage: string, 
@@ -266,6 +267,11 @@ export async function chatWithDrishti(
   incidents: Incident[], 
   conversationHistory: Array<{role: 'user' | 'assistant', message: string}>
 ): Promise<string> {
+  // RATE LIMITING: Check if we can make this API call (global rate limiter)
+  if (!canMakeApiCall()) {
+    return 'API rate limit reached. Please wait a moment before sending another message. This limit applies across all users to prevent quota exhaustion.';
+  }
+  
   const context = `
     Current Event Status:
     - Event: Mumbai Music Festival 2024
@@ -287,7 +293,7 @@ ${conversationContext}
 User Question: ${userMessage}
 
 STRICT INSTRUCTIONS:
-1. ONLY answer questions about THIS CROWD EVENT (Mumbai Music Festival 2024)
+1. ONLY answer questions about THIS CROWD EVENT 
 2. ONLY discuss: crowd density, zones A-F, incidents, safety, bottlenecks, event status
 3. DO NOT answer general questions, unrelated topics, or anything outside event scope
 4. If question is unrelated, politely redirect: "I can only answer questions about the current event crowd status and safety."
@@ -296,11 +302,6 @@ STRICT INSTRUCTIONS:
 
 Provide a helpful answer ONLY if it relates to the crowd event.`;
 
-  // RATE LIMITING: Check if we can make this API call
-  if (!canMakeApiCall()) {
-    return 'Chat temporarily unavailable due to API rate limiting. Please wait 10 seconds and try again.';
-  }
-  
   recordApiCall(); // Track this API call
 
   try {
@@ -309,7 +310,7 @@ Provide a helpful answer ONLY if it relates to the crowd event.`;
       contents: prompt,
       config: {
         temperature: 0.4,
-        systemInstruction: "You are Project Drishti's AI assistant for crowd safety at Mumbai Music Festival 2024. ONLY answer questions about crowd density, zones A-F, incidents, safety, and event status. REFUSE to answer unrelated questions politely. Be concise and professional.",
+        systemInstruction: "You are Project Drishti's AI assistant for crowd safety at a large public event. ONLY answer questions about crowd density, zones A-F, incidents, safety, and event status. REFUSE to answer unrelated questions politely. Be concise and professional.",
       },
     });
     
