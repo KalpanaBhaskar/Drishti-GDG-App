@@ -4,7 +4,7 @@
  */
 
 import { getVideoFrameProcessor, VideoFrame } from './videoFrameProcessor';
-import { analyzeVideoFrame, VideoAnalysisResult, ZoneMetrics, DetectedIncident } from './geminiService';
+import { VideoAnalysisResult, ZoneMetrics, DetectedIncident } from './geminiService';
 import { Zone, Incident } from '../types';
 import { 
   saveZones, 
@@ -12,6 +12,13 @@ import {
   addAnnouncement, 
   saveVideoMetrics 
 } from './firestoreService';
+
+// 3-LAYER SMART FUNNEL IMPORTS
+import { getMediaPipeDetectionService, DetectionResult } from './mediaPipeDetectionService';
+import { getRateLimitedGeminiService, GeminiAnalysisResult } from './rateLimitedGeminiService';
+import { getSpecialistAnalysisService } from './specialistAnalysisService';
+import { generateAutomatedUpdatesWithGrok, shouldTriggerGrokAnalysis } from './grokAutomationService';
+import { analyzeVideoFrameWithNvidia } from './nvidiaVideoAnalysisService';
 
 export interface VideoAnalysisCallbacks {
   onZonesUpdated: (zones: Zone[]) => void;
@@ -27,6 +34,12 @@ export class VideoAnalysisOrchestrator {
   private lastAnalysisTime = 0;
   private analysisCount = 0;
   private detectedIncidentIds = new Set<string>(); // Prevent duplicate incidents
+  private previousAnalysis: VideoAnalysisResult | null = null; // For Grok trend analysis
+  
+  // 3-LAYER SMART FUNNEL SERVICES
+  private mediaPipe = getMediaPipeDetectionService();
+  private geminiLayer = getRateLimitedGeminiService();
+  private specialistLayer = getSpecialistAnalysisService();
 
   /**
    * Start the complete video analysis pipeline
@@ -75,27 +88,51 @@ export class VideoAnalysisOrchestrator {
 
       console.log(`\n🔍 Analyzing frame ${frame.frameNumber} (Analysis #${this.analysisCount})...`);
 
-      // Step 1: Analyze frame with Gemini Vision AI
-      const analysis = await analyzeVideoFrame(frame.imageData);
+      // Step 1: Analyze frame with NVIDIA Vision AI (replaces Gemini)
+      const analysis = await analyzeVideoFrameWithNvidia(frame.imageData);
 
-      // Step 2: Update zones based on AI analysis
+      // Step 2: Use Grok for intelligent automation (incidents, announcements, bottlenecks, attendee count)
+      if (shouldTriggerGrokAnalysis(analysis)) {
+        console.log('🤖 Triggering Grok for intelligent automation...');
+        const grokUpdates = await generateAutomatedUpdatesWithGrok(analysis, this.previousAnalysis || undefined);
+        
+        // Process Grok-enhanced incidents
+        if (grokUpdates.enhancedIncidents.length > 0) {
+          await this.processGrokEnhancedIncidents(grokUpdates.enhancedIncidents);
+        }
+        
+        // Create Grok-suggested announcements
+        if (grokUpdates.suggestedAnnouncements.length > 0) {
+          await this.createGrokAnnouncements(grokUpdates.suggestedAnnouncements);
+        }
+        
+        // Update bottleneck predictions
+        if (grokUpdates.bottleneckPredictions.length > 0) {
+          await this.updateBottleneckPredictions(grokUpdates.bottleneckPredictions);
+        }
+        
+        // Update attendee count
+        if (grokUpdates.attendeeEstimate > 0) {
+          console.log(`👥 Grok attendee estimate: ${grokUpdates.attendeeEstimate}`);
+          // This will be passed through callbacks
+        }
+      }
+
+      // Step 3: Update zones based on AI analysis
       if (analysis.zones.length > 0) {
         await this.updateZonesFromAnalysis(analysis.zones);
       }
 
-      // Step 3: Detect and log incidents automatically (only if abnormality observed)
-      if (analysis.incidents.length > 0) {
+      // Step 4: Detect and log incidents (fallback if Grok not triggered)
+      if (analysis.incidents.length > 0 && !shouldTriggerGrokAnalysis(analysis)) {
         await this.processDetectedIncidents(analysis.incidents);
       }
 
-      // Step 4: Update bottleneck graphs from AI analysis
-      await this.updateBottleneckGraphs(analysis);
-
-      // Step 5: Auto-create announcements if critical info needs public dispatch
-      await this.createAutoAnnouncement(analysis);
-
-      // Step 6: Save video metrics to database
+      // Step 5: Save video metrics to database
       await this.saveMetrics(analysis);
+
+      // Step 6: Store for next analysis (Grok trend detection)
+      this.previousAnalysis = analysis;
 
       // Step 7: Notify callbacks
       this.callbacks.onAnalysisComplete(analysis);
@@ -133,51 +170,126 @@ export class VideoAnalysisOrchestrator {
     console.log('📍 Zones updated from video analysis');
   }
 
+
   /**
-   * Process AI analysis results to update bottleneck graphs
+   * Process Grok-enhanced incidents with intelligent classification
    */
-  private async updateBottleneckGraphs(analysis: VideoAnalysisResult): Promise<void> {
-    // The zones from analysis already contain current density and predicted density
-    // These are automatically saved to Firebase via saveZones()
-    // Bottleneck graphs will read from zones state which is updated via Firebase listener
-    
-    console.log('📊 Bottleneck data updated from AI analysis');
+  private async processGrokEnhancedIncidents(enhancedIncidents: any[]): Promise<void> {
+    for (const enhanced of enhancedIncidents) {
+      const detected = enhanced.originalIncident;
+      
+      // Skip low confidence detections
+      if (detected.confidence < 0.6) {
+        console.log(`⚠️ Skipping low-confidence incident: ${detected.description} (${detected.confidence})`);
+        continue;
+      }
+
+      // Create unique incident ID
+      const incidentHash = `${detected.type}-${detected.location}-${detected.description.substring(0, 30)}`;
+      
+      // Prevent duplicate logging
+      if (this.detectedIncidentIds.has(incidentHash)) {
+        console.log(`⚠️ Duplicate incident detected, skipping: ${detected.description}`);
+        continue;
+      }
+
+      this.detectedIncidentIds.add(incidentHash);
+
+      // Create incident with Grok enhancements
+      const incident: Incident = {
+        id: `INC-GROK-${Date.now()}`,
+        type: this.mapIncidentType(detected.type),
+        location: detected.location,
+        status: 'reported',
+        priority: this.mapGrokSeverityToPriority(enhanced.enhancedSeverity),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        description: `[GROK-ENHANCED] ${detected.description}\n\nRecommended Action: ${enhanced.recommendedAction}\nAssigned Teams: ${enhanced.assignedTeams.join(', ')}\nETA: ${enhanced.estimatedResponseTime}`
+      };
+
+      // Log incident to database
+      await addIncident(incident);
+
+      // Notify callback
+      if (this.callbacks) {
+        this.callbacks.onIncidentDetected(incident);
+      }
+
+      console.log(`🚨 GROK-ENHANCED INCIDENT: ${incident.id} - Urgency: ${enhanced.urgency}`);
+
+      // Create announcement if Grok recommends it
+      if (enhanced.publicAnnouncement) {
+        await this.createEmergencyAnnouncement(detected, incident);
+      }
+    }
+
+    // Cleanup old incident IDs after 5 minutes
+    setTimeout(() => {
+      enhancedIncidents.forEach(enhanced => {
+        const detected = enhanced.originalIncident;
+        const incidentHash = `${detected.type}-${detected.location}-${detected.description.substring(0, 30)}`;
+        this.detectedIncidentIds.delete(incidentHash);
+      });
+    }, 5 * 60 * 1000);
   }
 
   /**
-   * Auto-create announcements based on critical information from AI
+   * Create Grok-suggested announcements
    */
-  private async createAutoAnnouncement(analysis: VideoAnalysisResult): Promise<void> {
-    // Check if there's critical information that needs public announcement
-    const criticalZones = analysis.zones.filter(z => z.crowdDensity >= 85 || z.congestionLevel === 'bottleneck');
-    const highRiskFactors = analysis.zones.filter(z => z.riskFactors.length > 0);
-    
-    if (criticalZones.length > 0) {
-      const zoneNames = criticalZones.map(z => z.zoneName).join(', ');
+  private async createGrokAnnouncements(suggestions: any[]): Promise<void> {
+    for (const suggestion of suggestions) {
       const announcement = {
-        id: `ANN-AI-${Date.now()}`,
-        title: '⚠️ Crowd Alert',
-        content: `High crowd density detected in ${zoneNames}. Please use alternative routes and follow crowd control measures for your safety.`,
+        id: `ANN-GROK-${Date.now()}`,
+        title: suggestion.title,
+        content: suggestion.content,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        priority: 'urgent' as const
+        priority: suggestion.priority
       };
-      
+
       await addAnnouncement(announcement);
-      console.log('📢 AUTO-ANNOUNCEMENT: Critical crowd density alert');
+
+      // Notify callback
+      if (this.callbacks) {
+        this.callbacks.onAnnouncementCreated(announcement.title, announcement.content, announcement.priority);
+      }
+
+      console.log(`📢 GROK-SUGGESTED ANNOUNCEMENT: ${announcement.title} (Priority: ${suggestion.priority})`);
+      console.log(`   Target Zones: ${suggestion.targetZones.join(', ')}`);
+      console.log(`   Reason: ${suggestion.reason}`);
+    }
+  }
+
+  /**
+   * Update bottleneck predictions from Grok
+   */
+  private async updateBottleneckPredictions(predictions: any[]): Promise<void> {
+    console.log('📊 GROK BOTTLENECK PREDICTIONS:');
+    for (const pred of predictions) {
+      console.log(`   - ${pred.zoneName}: ${pred.currentDensity}% → ${pred.predictedDensity}% in ${pred.timeToBottleneck}`);
+      console.log(`     Confidence: ${Math.round(pred.confidence * 100)}%`);
+      console.log(`     Action: ${pred.suggestedAction}`);
+      if (pred.alternativeRoutes.length > 0) {
+        console.log(`     Alternative Routes: ${pred.alternativeRoutes.join(', ')}`);
+      }
     }
     
-    // Check for general safety information that needs announcement
-    if (analysis.anomalies.length > 0 && !analysis.incidents.some(i => i.requiresImmediate)) {
-      const announcement = {
-        id: `ANN-AI-${Date.now()}`,
-        title: 'ℹ️ Safety Update',
-        content: `${analysis.anomalies[0]}. Please stay alert and follow staff guidance.`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        priority: 'normal' as const
-      };
-      
-      await addAnnouncement(announcement);
-      console.log('📢 AUTO-ANNOUNCEMENT: Safety information dispatched');
+    // Bottleneck data is stored in zones and can be used by UI components
+    // No additional database storage needed - zones already contain predictedDensity
+  }
+
+  /**
+   * Map Grok severity to priority
+   */
+  private mapGrokSeverityToPriority(severity: string): Incident['priority'] {
+    switch (severity) {
+      case 'critical':
+        return 'high';
+      case 'high':
+        return 'high';
+      case 'medium':
+        return 'medium';
+      case 'low':
+      default:
+        return 'low';
     }
   }
 

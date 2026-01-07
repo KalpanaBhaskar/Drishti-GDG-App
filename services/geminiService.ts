@@ -17,9 +17,9 @@ const API_CALL_TRACKER = {
   resetTime: Date.now()
 };
 
-// OPTIMIZED: Enforce minimum 12 second gap between API calls to ensure <10 calls/min
-const MIN_API_CALL_INTERVAL = 12000; // 12 seconds
-const MAX_CALLS_PER_MINUTE = 12; // Maximum 5 calls per minute
+// OPTIMIZED: Enforce minimum 10 second gap between API calls (Drishti 10-second batches)
+const MIN_API_CALL_INTERVAL = 10000; // 10 seconds
+const MAX_CALLS_PER_MINUTE = 6; // Maximum 6 calls per minute (one every 10 seconds)
 
 function canMakeApiCall(): boolean {
   const now = Date.now();
@@ -39,7 +39,7 @@ function canMakeApiCall(): boolean {
   // Check if enough time passed since last call
   const timeSinceLastCall = now - API_CALL_TRACKER.lastCallTime;
   if (timeSinceLastCall < MIN_API_CALL_INTERVAL) {
-    console.warn(`⚠️ Gemini API called too soon (${timeSinceLastCall}ms < 12s). Skipping.`);
+    console.warn(`⚠️ Gemini API called too soon (${timeSinceLastCall}ms < 10s). Skipping.`);
     return false;
   }
   
@@ -49,7 +49,7 @@ function canMakeApiCall(): boolean {
 function recordApiCall(): void {
   API_CALL_TRACKER.lastCallTime = Date.now();
   API_CALL_TRACKER.callCount++;
-  console.log(`📡 Gemini API call ${API_CALL_TRACKER.callCount}/5 this minute`);
+  console.log(`📡 Gemini API call ${API_CALL_TRACKER.callCount}/6 this minute (Drishti 10-second batch)`);
 }
 
 // Types for video analysis
@@ -60,6 +60,13 @@ export interface VideoAnalysisResult {
   anomalies: string[];
   summary: string;
   timestamp: number;
+  // Drishti Live Intelligence Engine fields
+  timestamp_window?: string;
+  status?: 'NORMAL' | 'CAUTION' | 'CRITICAL';
+  severity_score?: number; // 1-10
+  dashboard_ticker_text?: string;
+  security_log_details?: string;
+  action_required?: boolean;
 }
 
 export interface ZoneMetrics {
@@ -83,8 +90,13 @@ export interface DetectedIncident {
 }
 
 /**
+ * @deprecated This function is NO LONGER USED for video analysis
+ * Video analysis now uses NVIDIA API (see nvidiaVideoAnalysisService.ts)
+ * This function remains for backward compatibility only
+ * 
  * Analyze video frame using Gemini 2.5 Flash with vision capabilities
- * This function now combines frame analysis + live summary in ONE API call (every 12 seconds)
+ * "DRISHTI" LIVE INTELLIGENCE ENGINE
+ * Processes incoming video data in 10-second batches for real-time safety monitoring
  */
 export async function analyzeVideoFrame(frameData: string): Promise<VideoAnalysisResult> {
   // RATE LIMITING: Check if we can make this API call
@@ -94,77 +106,90 @@ export async function analyzeVideoFrame(frameData: string): Promise<VideoAnalysi
   
   recordApiCall(); // Track this API call
   
-  const prompt = `You are analyzing a live video feed from a large public event .
+  // Get current timestamp for the 10-second window
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - 10000); // 10 seconds ago
+  const timestamp_window = `${windowStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} - ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
   
-  CRITICAL: Divide the video frame into a 3x2 GRID (3 columns × 2 rows) to create 6 FIXED ZONES:
-  
-  GEOMETRIC SEGMENTATION:
-  ┌─────────┬─────────┬─────────┐
-  │ Zone A  │ Zone B  │ Zone C  │  ← Row 1 (Top)
-  │ (Left)  │(Center) │ (Right) │
-  ├─────────┼─────────┼─────────┤
-  │ Zone D  │ Zone E  │ Zone F  │  ← Row 2 (Bottom)
-  │ (Left)  │(Center) │ (Right) │
-  └─────────┴─────────┴─────────┘
-  
-  ZONE MAPPING (Geometrically divide the frame):
-  - Zone A: Top-Left third of frame (columns 0-33%, rows 0-50%)
-  - Zone B: Top-Center third of frame (columns 33-66%, rows 0-50%)
-  - Zone C: Top-Right third of frame (columns 66-100%, rows 0-50%)
-  - Zone D: Bottom-Left third of frame (columns 0-33%, rows 50-100%)
-  - Zone E: Bottom-Center third of frame (columns 33-66%, rows 50-100%)
-  - Zone F: Bottom-Right third of frame (columns 66-100%, rows 50-100%)
-  
-  Analyze this frame and provide:
-  
-  1. ZONE ANALYSIS: For EACH of the 6 zones based on geometric segmentation, estimate crowd density (0-100%):
-  
-  2. INCIDENT DETECTION: Identify any safety concerns:
-     - Medical emergencies (people collapsed, distress signals)
-     - Fire or smoke
-     - Overcrowding/crushing/stampede risks
-     - Security threats (fights, suspicious activity)
-     - Infrastructure issues
-  
-  3. CROWD METRICS:
-     - Estimate total visible people
-     - Assess crowd movement (static, slow, moderate, fast)
-     - Identify bottlenecks or congestion points
-  
-  4. RISK ASSESSMENT: Flag any immediate dangers requiring emergency response
-  
-  IMPORTANT: Analyze ALL 6 zones, even if some appear empty or not visible in frame.
-  
-  Respond in this EXACT JSON format (no markdown, just pure JSON):
-  {
-    "zones": [
-      {
-        "zoneId": "zone-a|zone-b|zone-c|zone-d|zone-e|zone-f",
-        "zoneName": "Zone A|Zone B|Zone C|Zone D|Zone E|Zone F",
-        "crowdDensity": 0-100,
-        "predictedDensity": 0-100,
-        "peopleCount": estimated_number,
-        "movementSpeed": "slow|moderate|fast",
-        "congestionLevel": "normal|congested|bottleneck",
-        "riskFactors": ["risk1", "risk2"]
-      }
-    ],
-    "incidents": [
-      {
-        "type": "medical|security|fire|anomaly|congestion|smoke",
-        "location": "zone_id",
-        "severity": "low|medium|high|critical",
-        "description": "What you observed",
-        "confidence": 0.0-1.0,
-        "requiresImmediate": true|false
-      }
-    ],
-    "crowdDensity": 0-100,
-    "anomalies": ["anomaly descriptions"],
-    "summary": "Brief tactical summary: Overall status, key risks, bottlenecks, and immediate recommendations for event commanders."
-  }
-  
-  Make the summary comprehensive and actionable - it will be used as the live situational update.`;
+  const prompt = `Role & Objective:
+You are the "Drishti" Live Intelligence Engine. Your task is to process incoming video data streams in strict 10-second batches. Your goal is to generate a real-time safety summary that updates the monitoring dashboard exactly once per batch.
+
+Input Context:
+You will receive visual data representing the most recent 10 seconds of activity. Treat this 10-second window as the "Current Event."
+
+Core Analysis Protocols:
+
+1. THE 10-SECOND ASSESSMENT:
+   - Analyze only the behavior occurring in the current window
+   - Compare the start of the window (0s) to the end (10s) to determine immediate trends
+   - Example: "Crowd density increased by 20% in the last 10 seconds"
+
+2. VISUAL EVENT DETECTION:
+   - Identify key entities: Individuals, distinct crowd clusters, and objects
+   - Scan for anomalies: Running, falling, aggressive gestures, or formation of bottlenecks
+
+3. SEVERITY SCORING (Real-Time):
+   Assign a score (1-10) based strictly on the current 10-second observation:
+   - Low (1-3): Steady flow, normal behavior
+   - Medium (4-7): Sudden stops, loud gesturing, minor congestion
+   - High (8-10): Violence, weapons, fire, or stampede dynamics
+
+4. GEOMETRIC ZONE DIVISION:
+   Divide the frame into a 3x2 GRID (6 FIXED ZONES):
+   ┌─────────┬─────────┬─────────┐
+   │ Zone A  │ Zone B  │ Zone C  │  ← Top Row
+   ├─────────┼─────────┼─────────┤
+   │ Zone D  │ Zone E  │ Zone F  │  ← Bottom Row
+   └─────────┴─────────┴─────────┘
+   
+   - Zone A: Top-Left (0-33% width, 0-50% height)
+   - Zone B: Top-Center (33-66% width, 0-50% height)
+   - Zone C: Top-Right (66-100% width, 0-50% height)
+   - Zone D: Bottom-Left (0-33% width, 50-100% height)
+   - Zone E: Bottom-Center (33-66% width, 50-100% height)
+   - Zone F: Bottom-Right (66-100% width, 50-100% height)
+
+STRICT OUTPUT TEMPLATE - Respond ONLY with raw JSON (no markdown, no conversational text):
+{
+  "timestamp_window": "${timestamp_window}",
+  "status": "NORMAL|CAUTION|CRITICAL",
+  "severity_score": 1-10,
+  "dashboard_ticker_text": "Max 15 words high-level summary",
+  "security_log_details": "Max 50 words specific details on who, what, and where",
+  "action_required": true|false,
+  "zones": [
+    {
+      "zoneId": "zone-a|zone-b|zone-c|zone-d|zone-e|zone-f",
+      "zoneName": "Zone A|Zone B|Zone C|Zone D|Zone E|Zone F",
+      "crowdDensity": 0-100,
+      "predictedDensity": 0-100,
+      "peopleCount": estimated_number,
+      "movementSpeed": "slow|moderate|fast",
+      "congestionLevel": "normal|congested|bottleneck",
+      "riskFactors": ["risk1", "risk2"]
+    }
+  ],
+  "incidents": [
+    {
+      "type": "medical|security|fire|anomaly|congestion|smoke",
+      "location": "zone_id",
+      "severity": "low|medium|high|critical",
+      "description": "What you observed",
+      "confidence": 0.0-1.0,
+      "requiresImmediate": true|false
+    }
+  ],
+  "crowdDensity": 0-100,
+  "anomalies": ["anomaly descriptions"],
+  "summary": "Brief tactical summary for event commanders"
+}
+
+CRITICAL RULES:
+- Output MUST be pure JSON (no \`\`\`json markers)
+- Dashboard ticker text MUST be under 15 words
+- Security log details MUST be under 50 words
+- Analyze ALL 6 zones even if empty
+- Base severity_score ONLY on this 10-second window`;
 
   try {
     const response = await ai.models.generateContent({

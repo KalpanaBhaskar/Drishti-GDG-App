@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid Video Analysis - Demo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3a8a 0%, #7e22ce 100%);
+            color: white;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 40px;
+            border-radius: 20px;
+            backdrop-filter: blur(15px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+        .subtitle {
+            text-align: center;
+            color: #60a5fa;
+            margin-bottom: 30px;
+            font-size: 1.2rem;
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto 30px;
+            background: black;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        video {
+            width: 100%;
+            display: block;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 14px 28px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-specialist { background: #8b5cf6; color: white; }
+        
+        .layers {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 25px;
+            margin-top: 40px;
+        }
+        .layer {
+            padding: 25px;
+            border-radius: 15px;
+            border: 2px solid;
+            background: rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease;
+        }
+        .layer:hover {
+            transform: translateY(-5px);
+        }
+        .layer-1 { border-color: #10b981; background: rgba(16, 185, 129, 0.1); }
+        .layer-2 { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
+        .layer-3 { border-color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
+        
+        .layer h3 {
+            margin: 0 0 15px 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 1.3rem;
+        }
+        .status {
+            font-size: 11px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            font-weight: bold;
+        }
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            margin: 12px 0;
+            font-size: 15px;
+        }
+        .stat-label {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        .stat-value {
+            font-weight: bold;
+            color: #fbbf24;
+        }
+        .description {
+            background: rgba(0, 0, 0, 0.4);
+            padding: 18px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-style: italic;
+            min-height: 80px;
+            line-height: 1.6;
+        }
+        .info-note {
+            font-size: 13px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            opacity: 0.8;
+        }
+        
+        .logs {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 20px;
+            border-radius: 15px;
+            max-height: 250px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin-top: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .log-entry {
+            margin: 8px 0;
+            padding: 8px;
+            border-left: 3px solid #3b82f6;
+            padding-left: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 5px;
+        }
+        
+        .info-banner {
+            background: rgba(59, 130, 246, 0.2);
+            border: 2px solid #3b82f6;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        .info-banner h3 {
+            margin-bottom: 10px;
+            color: #60a5fa;
+        }
+        .info-banner ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        .info-banner li {
+            padding: 5px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+        .info-banner li:before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #60a5fa;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Hybrid Video Analysis Demo</h1>
+        <p class="subtitle">3-Layer Smart Funnel: MediaPipe + Gemini + NVIDIA/Grok</p>
+        
+        <div class="info-banner">
+            <h3>💡 How This Works</h3>
+            <ul>
+                <li><strong>Layer 1 (Green):</strong> MediaPipe runs locally at 30 FPS detecting people - Zero cost!</li>
+                <li><strong>Layer 2 (Blue):</strong> Gemini analyzes when people detected - Updates every 7-10 seconds</li>
+                <li><strong>Layer 3 (Purple):</strong> NVIDIA/Grok deep analysis - Press N or G to trigger manually</li>
+            </ul>
+            <p style="margin-top: 15px; font-size: 12px; opacity: 0.8;">
+                ⚠️ This is a SIMULATION. Real implementation uses actual APIs. See documentation for integration.
+            </p>
+        </div>
+
+        <div class="video-container">
+            <video id="video" autoplay muted playsinline></video>
+            <canvas id="overlay"></canvas>
+        </div>
+
+        <div class="controls">
+            <button class="btn-success" onclick="startWebcam()">📷 Start Webcam</button>
+            <button class="btn-primary" onclick="startAnalysis()" id="startBtn" disabled>▶️ Start Analysis</button>
+            <button class="btn-danger" onclick="stopAnalysis()" id="stopBtn" disabled>⏹️ Stop Analysis</button>
+            <button class="btn-specialist" onclick="triggerSpecialist('nvidia')" id="nvidiaBtn" disabled>🔬 NVIDIA (N)</button>
+            <button class="btn-specialist" onclick="triggerSpecialist('grok')" id="grokBtn" disabled>🔬 Grok (G)</button>
+        </div>
+
+        <div class="layers">
+            <!-- Layer 1 -->
+            <div class="layer layer-1">
+                <h3>
+                    👁️ Layer 1: MediaPipe
+                    <span class="status" id="layer1-status">IDLE</span>
+                </h3>
+                <div class="stat">
+                    <span class="stat-label">Detection:</span>
+                    <span class="stat-value" id="layer1-detection">No</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">People Count:</span>
+                    <span class="stat-value" id="layer1-count">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Confidence:</span>
+                    <span class="stat-value" id="layer1-confidence">0%</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Frames Processed:</span>
+                    <span class="stat-value" id="layer1-frames">0</span>
+                </div>
+                <p class="info-note">
+                    ⚡ Runs at 30 FPS • 100% Local • $0 API Cost
+                </p>
+            </div>
+
+            <!-- Layer 2 -->
+            <div class="layer layer-2">
+                <h3>
+                    🤖 Layer 2: Gemini
+                    <span class="status" id="layer2-status">WAITING</span>
+                </h3>
+                <div class="description" id="layer2-description">
+                    Waiting for Layer 1 to detect people...
+                </div>
+                <div class="stat">
+                    <span class="stat-label">API Calls Made:</span>
+                    <span class="stat-value" id="layer2-calls">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Next Update:</span>
+                    <span class="stat-value" id="layer2-next">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Keywords Found:</span>
+                    <span class="stat-value" id="layer2-keywords">None</span>
+                </div>
+                <p class="info-note">
+                    ⏱️ Rate Limited: &lt;10 calls/min • ~$0.00015 per call
+                </p>
+            </div>
+
+            <!-- Layer 3 -->
+            <div class="layer layer-3">
+                <h3>
+                    🔬 Layer 3: Specialist
+                    <span class="status" id="layer3-status">IDLE</span>
+                </h3>
+                <div class="description" id="layer3-description">
+                    No specialist analysis yet. Press N or G to trigger deep analysis.
+                </div>
+                <div class="stat">
+                    <span class="stat-label">API Calls Made:</span>
+                    <span class="stat-value" id="layer3-calls">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Auto-Triggers:</span>
+                    <span class="stat-value" id="layer3-auto">0</span>
+                </div>
+                <p class="info-note">
+                    💰 On-Demand Only • ~$0.002 per call • Manual or Auto-trigger
+                </p>
+            </div>
+        </div>
+
+        <div class="logs" id="logs">
+            <strong>📋 System Logs:</strong><br><br>
+            <div id="log-content"></div>
+        </div>
+    </div>
+
+    <script>
+        let video, canvas, ctx;
+        let isAnalyzing = false;
+        let animationId;
+        let frameCount = 0;
+        let lastGeminiCall = 0;
+        let geminiCalls = 0;
+        let specialistCalls = 0;
+        let autoTriggers = 0;
+
+        const GEMINI_MIN_INTERVAL = 7000; // 7 seconds
+
+        function log(message) {
+            const logContent = document.getElementById('log-content');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `[${timestamp}] ${message}`;
+            logContent.insertBefore(entry, logContent.firstChild);
+            while (logContent.children.length > 15) {
+                logContent.removeChild(logContent.lastChild);
+            }
+        }
+
+        async function startWebcam() {
+            try {
+                video = document.getElementById('video');
+                canvas = document.getElementById('overlay');
+                ctx = canvas.getContext('2d');
+
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 1280, height: 720 } 
+                });
+                video.srcObject = stream;
+
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    document.getElementById('startBtn').disabled = false;
+                    log('✅ Webcam started - Ready for analysis');
+                };
+            } catch (error) {
+                log('❌ Error accessing webcam: ' + error.message);
+                alert('Could not access webcam. Please check permissions.');
+            }
+        }
+
+        function startAnalysis() {
+            isAnalyzing = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('nvidiaBtn').disabled = false;
+            document.getElementById('grokBtn').disabled = false;
+            document.getElementById('layer1-status').textContent = 'LIVE ⚡';
+
+            log('🚀 Analysis started - All 3 layers active');
+            log('📊 Layer 1: Processing at 30 FPS');
+            
+            processFrame();
+        }
+
+        function stopAnalysis() {
+            isAnalyzing = false;
+            if (animationId) cancelAnimationFrame(animationId);
+            
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('nvidiaBtn').disabled = true;
+            document.getElementById('grokBtn').disabled = true;
+            document.getElementById('layer1-status').textContent = 'IDLE';
+
+            log('⏹️ Analysis stopped');
+        }
+
+        function processFrame() {
+            if (!isAnalyzing) return;
+
+            frameCount++;
+            const hasDetection = Math.random() > 0.3;
+            const detectionCount = hasDetection ? Math.floor(Math.random() * 3) + 1 : 0;
+            const confidence = hasDetection ? 0.7 + Math.random() * 0.3 : 0;
+
+            document.getElementById('layer1-detection').textContent = hasDetection ? 'YES ✓' : 'NO';
+            document.getElementById('layer1-count').textContent = detectionCount;
+            document.getElementById('layer1-confidence').textContent = Math.round(confidence * 100) + '%';
+            document.getElementById('layer1-frames').textContent = frameCount;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (hasDetection) {
+                for (let i = 0; i < detectionCount; i++) {
+                    const x = 100 + Math.random() * (canvas.width - 300);
+                    const y = 50 + Math.random() * (canvas.height - 300);
+                    ctx.strokeStyle = `hsl(${i * 120}, 100%, 50%)`;
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(x, y, 120, 250);
+                    
+                    // Draw simple skeleton
+                    ctx.beginPath();
+                    ctx.moveTo(x + 60, y + 40);
+                    ctx.lineTo(x + 60, y + 150);
+                    ctx.lineTo(x + 30, y + 220);
+                    ctx.moveTo(x + 60, y + 150);
+                    ctx.lineTo(x + 90, y + 220);
+                    ctx.stroke();
+                }
+            }
+
+            const now = Date.now();
+            const timeSinceLastCall = now - lastGeminiCall;
+            if (hasDetection && timeSinceLastCall >= GEMINI_MIN_INTERVAL) {
+                callGeminiLayer(detectionCount);
+            }
+
+            const nextUpdateIn = Math.max(0, Math.ceil((GEMINI_MIN_INTERVAL - timeSinceLastCall) / 1000));
+            document.getElementById('layer2-next').textContent = nextUpdateIn > 0 ? `${nextUpdateIn}s` : 'READY';
+
+            animationId = requestAnimationFrame(processFrame);
+        }
+
+        function callGeminiLayer(detectionCount) {
+            lastGeminiCall = Date.now();
+            geminiCalls++;
+            
+            document.getElementById('layer2-status').textContent = 'ANALYZING...';
+            document.getElementById('layer2-calls').textContent = geminiCalls;
+            
+            log(`🤖 Layer 2: Calling Gemini API (Call #${geminiCalls})`);
+
+            setTimeout(() => {
+                const scenarios = [
+                    `${detectionCount} person(s) detected in the frame. People appear to be standing casually. No immediate concerns observed.`,
+                    `Scene shows ${detectionCount} individual(s) in a well-lit indoor setting. Normal behavioral patterns detected.`,
+                    `${detectionCount} person(s) visible with calm demeanor. Area appears safe with adequate spacing.`,
+                    `DANGER: ${detectionCount} person(s) detected with unusual movement patterns. Recommend immediate review.`,
+                    `Monitoring ${detectionCount} person(s). Environment stable, crowd density is within acceptable limits.`
+                ];
+                
+                const description = scenarios[Math.floor(Math.random() * scenarios.length)];
+                const keywords = description.toLowerCase().includes('danger') ? ['danger'] : [];
+                
+                document.getElementById('layer2-description').textContent = `"${description}"`;
+                document.getElementById('layer2-keywords').textContent = keywords.length > 0 ? keywords.join(', ') : 'None';
+                document.getElementById('layer2-status').textContent = 'READY';
+                
+                log(`✅ Layer 2: Analysis complete`);
+
+                if (keywords.includes('danger')) {
+                    autoTriggers++;
+                    document.getElementById('layer3-auto').textContent = autoTriggers;
+                    log('🚨 Layer 2: DANGER keyword detected - Auto-triggering Layer 3!');
+                    setTimeout(() => triggerSpecialist('nvidia', true), 500);
+                }
+            }, 1800);
+        }
+
+        function triggerSpecialist(provider, isAuto = false) {
+            if (!isAnalyzing && !isAuto) {
+                log('⚠️ Start analysis before triggering specialist');
+                return;
+            }
+
+            specialistCalls++;
+            document.getElementById('layer3-calls').textContent = specialistCalls;
+            document.getElementById('layer3-status').textContent = 'PROCESSING...';
+            
+            const triggerType = isAuto ? 'Auto' : 'Manual';
+            log(`🔬 Layer 3: ${provider.toUpperCase()} specialist analysis triggered (${triggerType})`);
+
+            setTimeout(() => {
+                const analyses = [
+                    `Deep security analysis complete. Comprehensive scan reveals multiple individuals exhibiting normal behavioral patterns. No weapons or suspicious objects detected. Environmental conditions are safe. Lighting is adequate, and all subjects appear calm. Exit routes are clearly visible and accessible. Recommendation: Continue standard monitoring protocols.`,
+                    `Advanced threat assessment performed. Scene contains ${Math.floor(Math.random() * 5) + 1} individual(s) with standard posture and movement. No signs of distress, aggressive behavior, or dangerous objects identified. Crowd density is manageable. All detected persons show relaxed body language consistent with non-threatening scenarios. Suggested action: Maintain current surveillance level.`,
+                    `Specialist vision analysis completed. Detailed examination shows a controlled environment with appropriate safety measures in place. Subject detection confirms normal social interaction patterns. No anomalies in gait, posture, or hand movements. Temperature and lighting conditions are optimal. Risk assessment: LOW. Recommendation: Continue routine monitoring with no immediate intervention required.`
+                ];
+                
+                const analysis = analyses[Math.floor(Math.random() * analyses.length)];
+                
+                document.getElementById('layer3-description').textContent = analysis;
+                document.getElementById('layer3-status').textContent = 'COMPLETE ✓';
+                
+                log(`✅ Layer 3: ${provider.toUpperCase()} analysis complete`);
+                
+                setTimeout(() => {
+                    document.getElementById('layer3-status').textContent = 'IDLE';
+                }, 4000);
+            }, 3500);
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (!isAnalyzing) return;
+            if (e.key === 'n' || e.key === 'N') triggerSpecialist('nvidia');
+            else if (e.key === 'g' || e.key === 'G') triggerSpecialist('grok');
+        });
+
+        log('🎯 Hybrid Video Analysis System initialized');
+        log('💡 Click "Start Webcam" then "Start Analysis" to begin');
+        log('⌨️ Press N (NVIDIA) or G (Grok) during analysis for specialist review');
+    </script>
+</body>
+</html>

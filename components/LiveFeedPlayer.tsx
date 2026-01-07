@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Video, Youtube, Upload, Loader2, Play, Pause, Brain, Activity } from 'lucide-react';
-import { getVideoAnalysisOrchestrator } from '../services/videoAnalysisOrchestrator';
-import { VideoAnalysisResult } from '../services/geminiService';
+import { getHybridVideoAnalysisOrchestrator, AnalysisState } from '../services/hybridVideoAnalysisOrchestrator';
 import { Zone, Incident } from '../types';
 
 interface LiveFeedPlayerProps {
@@ -15,6 +14,7 @@ interface LiveFeedPlayerProps {
   onAnnouncementCreated?: (title: string, content: string, priority: 'normal' | 'urgent') => void;
   onAnalysisStatusChange?: (isActive: boolean) => void;
   onAttendeeCountUpdate?: (count: number) => void;
+  onAiSummaryUpdate?: (summary: string, timestamp: string) => void;
 }
 
 const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({ 
@@ -23,90 +23,183 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
   onIncidentDetected,
   onAnnouncementCreated,
   onAnalysisStatusChange,
-  onAttendeeCountUpdate
+  onAttendeeCountUpdate,
+  onAiSummaryUpdate
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisStats, setAnalysisStats] = useState({
-    analysisCount: 0,
-    frameCount: 0,
-    lastAnalysis: ''
-  });
-  const [latestAnalysis, setLatestAnalysis] = useState<VideoAnalysisResult | null>(null);
+  const [analysisState, setAnalysisState] = useState<AnalysisState | null>(null);
   const [aiSummary, setAiSummary] = useState<string>('Waiting for AI analysis to begin...');
   const [summaryUpdateTime, setSummaryUpdateTime] = useState<string>('');
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Initialize the hybrid orchestrator (fast initialization)
+  useEffect(() => {
+    const orchestrator = getHybridVideoAnalysisOrchestrator();
+    orchestrator.initialize().then(() => {
+      setIsInitialized(true);
+      console.log('✅ Hybrid orchestrator core initialized for LiveFeedPlayer');
+    }).catch(err => {
+      console.error('❌ Failed to initialize orchestrator:', err);
+      // Still allow the user to try - Layer 1 might work even if others fail
+      setIsInitialized(true);
+    });
+
+    return () => {
+      if (isAnalyzing) {
+        orchestrator.stop();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (videoSource?.type === 'local' && videoRef.current) {
-      videoRef.current.load();
+      const video = videoRef.current;
+      
+      // Reset video state and trigger load
+      video.load();
+      
+      // Add metadata loaded listener for debugging
+      const handleMetadataLoaded = () => {
+        console.log(`📹 Video metadata loaded: ${video.videoWidth}x${video.videoHeight}, duration: ${video.duration}s, readyState: ${video.readyState}`);
+      };
+      
+      const handleCanPlay = () => {
+        console.log(`▶️ Video can play: readyState ${video.readyState}`);
+      };
+      
+      video.addEventListener('loadedmetadata', handleMetadataLoaded, { once: true });
+      video.addEventListener('canplay', handleCanPlay, { once: true });
+      
+      // Cleanup
+      return () => {
+        video.removeEventListener('loadedmetadata', handleMetadataLoaded);
+        video.removeEventListener('canplay', handleCanPlay);
+      };
     }
   }, [videoSource]);
 
-  // Start video analysis
+  // Start video analysis with hybrid orchestrator
   const startAnalysis = () => {
-    if (!videoRef.current) {
+    if (!videoRef.current || !overlayCanvasRef.current) {
       alert('Video not ready. Please wait for video to load.');
       return;
     }
 
-    const orchestrator = getVideoAnalysisOrchestrator();
-    
-    // Display hardcoded summary 2 seconds after Start Analysis is pressed
-    setTimeout(() => {
-      const hardcodedSummary = "Based on the live feed from the Central Intersection (Zone A), the system detects a high-volume pedestrian scramble currently in progress. Crowd density is estimated at a Moderate-High 65%, with fluid movement in multiple directions and no signs of panic or gridlock. However, predictive analysis warns of an impending bottleneck at the sidewalk entry points, particularly in the North-East corner, where density is forecast to spike to a Critical 85% as the signal phase concludes. While no immediate anomalies like violence or medical distress are detected, the risk of sidewalk overflow is rising. Commanders are advised to maintain the current signal timing but should immediately deploy a crowd control officer to the North-East sector to proactively manage the merging traffic and prevent congestion.";
-      setAiSummary(hardcodedSummary);
-      setSummaryUpdateTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    }, 2000);
-    
-    orchestrator.start(videoRef.current, {
-      onZonesUpdated: (zones) => {
-        console.log('✅ Zones updated:', zones);
-        onZonesUpdated?.(zones);
-      },
-      onIncidentDetected: (incident) => {
-        console.log('🚨 Incident detected:', incident);
-        onIncidentDetected?.(incident);
-      },
-      onAnnouncementCreated: (title, content, priority) => {
-        console.log('📢 Announcement created:', title);
-        onAnnouncementCreated?.(title, content, priority);
-      },
-      onAnalysisComplete: (result) => {
-        setLatestAnalysis(result);
-        const stats = orchestrator.getStats();
-        setAnalysisStats({
-          analysisCount: stats.analysisCount,
-          frameCount: stats.frameCount,
-          lastAnalysis: new Date(stats.lastAnalysisTime).toLocaleTimeString()
-        });
+    if (!isInitialized) {
+      alert('MediaPipe is still loading. Please wait a moment and try again.');
+      return;
+    }
+
+    // Different readiness checks for YouTube vs local videos
+    if (videoSource?.type === 'youtube') {
+      // YouTube videos in iframe cannot be analyzed directly due to CORS restrictions
+      alert('AI Analysis is currently only available for local video uploads. YouTube analysis coming soon!');
+      return;
+    } 
+
+    // For local videos - more robust readiness check
+    if (videoSource?.type === 'local') {
+      const video = videoRef.current;
+      
+      // Check if the video element has basic properties
+      if (!video.src && !video.currentSrc) {
+        alert('Video source not loaded. Please try again in a moment.');
+        return;
+      }
+
+      // If metadata isn't ready yet, wait for it
+      if (video.readyState < 2) {
+        console.log('Waiting for video metadata to load...');
         
-        // Update AI summary (limited to ~100 words)
-        if (result.summary) {
-          setAiSummary(result.summary);
-          setSummaryUpdateTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-        }
+        const waitForMetadata = () => {
+          if (video.readyState >= 2) {
+            console.log('✅ Video metadata loaded, starting analysis');
+            startAnalysisInternal();
+          } else {
+            alert('Video is still loading. Please wait a moment and try again.');
+          }
+        };
+
+        // Listen for metadata load event
+        video.addEventListener('loadedmetadata', waitForMetadata, { once: true });
         
-        // Calculate dynamic attendee count with ±50 range
-        if (result.zones && result.zones.length > 0) {
-          const totalPeople = result.zones.reduce((sum, z) => sum + z.peopleCount, 0);
-          // Add random variation of ±50 people
-          const variation = Math.floor(Math.random() * 101) - 50; // Random between -50 and +50
-          const dynamicCount = Math.max(0, totalPeople + variation);
-          onAttendeeCountUpdate?.(dynamicCount);
-        }
+        // Also try after a short delay (fallback)
+        setTimeout(() => {
+          if (video.readyState >= 2) {
+            waitForMetadata();
+          }
+        }, 500);
+        
+        return;
+      }
+    }
+
+    // If we reach here, video should be ready
+    startAnalysisInternal();
+  };
+
+  const startAnalysisInternal = () => {
+    if (!videoRef.current || !overlayCanvasRef.current) return;
+
+    const video = videoRef.current;
+    
+    // Final safety check - ensure we can get video dimensions
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      // Try to trigger metadata load
+      video.load();
+      alert('Video dimensions not available yet. Please wait a moment and try again.');
+      return;
+    }
+
+    // Ensure overlay canvas has proper dimensions
+    overlayCanvasRef.current.width = video.videoWidth;
+    overlayCanvasRef.current.height = video.videoHeight;
+    
+    console.log(`🎬 Starting analysis - Video: ${video.videoWidth}x${video.videoHeight}, Canvas: ${overlayCanvasRef.current.width}x${overlayCanvasRef.current.height}`);
+
+    const orchestrator = getHybridVideoAnalysisOrchestrator();
+    
+    const handleEnded = () => {
+      // Stop analysis automatically when the clip ends (common for short test videos)
+      stopAnalysis();
+    };
+
+    videoRef.current.addEventListener('ended', handleEnded, { once: true });
+
+    orchestrator.start(videoRef.current, overlayCanvasRef.current, (state: AnalysisState) => {
+      setAnalysisState(state);
+      
+      // Update AI summary from Layer 2 (Gemini)
+      if (state.layer2.description) {
+        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setAiSummary(state.layer2.description);
+        setSummaryUpdateTime(timestamp);
+        onAiSummaryUpdate?.(state.layer2.description, timestamp);
+      }
+      
+      // Update attendee count from Layer 1 detections
+      if (state.layer1.detectionCount > 0) {
+        // Simulate attendee count based on detections (multiply by zone factor)
+        const estimatedCount = state.layer1.detectionCount * 1000; // Each detection represents ~1000 people in venue
+        onAttendeeCountUpdate?.(estimatedCount);
       }
     });
 
     setIsAnalyzing(true);
     onAnalysisStatusChange?.(true);
+    console.log('▶️ Hybrid video analysis started');
   };
 
   // Stop video analysis
   const stopAnalysis = () => {
-    const orchestrator = getVideoAnalysisOrchestrator();
+    if (!isAnalyzing) return;
+    const orchestrator = getHybridVideoAnalysisOrchestrator();
     orchestrator.stop();
     setIsAnalyzing(false);
     onAnalysisStatusChange?.(false);
+    console.log('⏹️ Hybrid video analysis stopped');
   };
 
   // Cleanup on unmount
@@ -181,15 +274,35 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
                 )}
               </div>
               <p className="text-sm text-slate-200 leading-relaxed">{aiSummary}</p>
-              {latestAnalysis?.incidents && latestAnalysis.incidents.length > 0 && (
+              {analysisState && analysisState.layer1.hasDetection && (
                 <div className="mt-2 flex items-center gap-2">
-                  <span className="px-2 py-1 bg-red-600/20 border border-red-600/30 text-red-400 text-[10px] font-bold rounded">
-                    ⚠️ {latestAnalysis.incidents.length} INCIDENT(S) DETECTED
+                  <span className="px-2 py-1 bg-emerald-600/20 border border-emerald-600/30 text-emerald-400 text-[10px] font-bold rounded">
+                    👥 {analysisState.layer1.detectionCount} PERSON(S) DETECTED
+                  </span>
+                  <span className="px-2 py-1 bg-blue-600/20 border border-blue-600/30 text-blue-400 text-[10px] font-bold rounded">
+                    CONFIDENCE: {(analysisState.layer1.confidence * 100).toFixed(0)}%
+                  </span>
+                </div>
+              )}
+              {analysisState && analysisState.layer2.keywords.length > 0 && (
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-slate-400 font-bold">KEYWORDS:</span>
+                  {analysisState.layer2.keywords.slice(0, 5).map((keyword, idx) => (
+                    <span key={idx} className="px-2 py-0.5 bg-blue-600/20 border border-blue-600/30 text-blue-400 text-[9px] font-bold rounded">
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {analysisState && analysisState.layer3.deepAnalysis && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="px-2 py-1 bg-purple-600/20 border border-purple-600/30 text-purple-400 text-[10px] font-bold rounded">
+                    🔬 SPECIALIST ANALYSIS AVAILABLE
                   </span>
                 </div>
               )}
               <p className="text-[10px] text-slate-500 mt-2 italic">
-                Auto-updating every 12 seconds during active analysis
+                3-Layer Smart Funnel: MediaPipe (30 FPS) → Gemini (Rate Limited) → NVIDIA/Grok (On-Demand)
               </p>
             </div>
           </div>
@@ -230,19 +343,23 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
             </div>
 
             {/* Stats Display */}
-            {analysisStats.analysisCount > 0 && (
+            {analysisState && (
               <div className="flex items-center gap-6">
                 <div className="text-center">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Frames Analyzed</p>
-                  <p className="text-lg font-black text-white">{analysisStats.frameCount}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Frames Processed</p>
+                  <p className="text-lg font-black text-white">{analysisState.stats.totalFramesProcessed}</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">AI Cycles</p>
-                  <p className="text-lg font-black text-white">{analysisStats.analysisCount}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Grok Calls</p>
+                  <p className="text-lg font-black text-white">{analysisState.stats.grokCallsMade}</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Last Update</p>
-                  <p className="text-sm font-bold text-emerald-400">{analysisStats.lastAnalysis || 'N/A'}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">NVIDIA Calls</p>
+                  <p className="text-lg font-black text-white">{analysisState.stats.nvidiaCallsMade}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Auto Triggers</p>
+                  <p className="text-lg font-black text-emerald-400">{analysisState.stats.autoTriggersDetected}</p>
                 </div>
               </div>
             )}
@@ -301,15 +418,35 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
               )}
             </div>
             <p className="text-sm text-slate-200 leading-relaxed">{aiSummary}</p>
-            {latestAnalysis?.incidents && latestAnalysis.incidents.length > 0 && (
+            {analysisState && analysisState.layer1.hasDetection && (
               <div className="mt-2 flex items-center gap-2">
-                <span className="px-2 py-1 bg-red-600/20 border border-red-600/30 text-red-400 text-[10px] font-bold rounded">
-                  ⚠️ {latestAnalysis.incidents.length} INCIDENT(S) DETECTED
+                <span className="px-2 py-1 bg-emerald-600/20 border border-emerald-600/30 text-emerald-400 text-[10px] font-bold rounded">
+                  👥 {analysisState.layer1.detectionCount} PERSON(S) DETECTED
+                </span>
+                <span className="px-2 py-1 bg-blue-600/20 border border-blue-600/30 text-blue-400 text-[10px] font-bold rounded">
+                  CONFIDENCE: {(analysisState.layer1.confidence * 100).toFixed(0)}%
+                </span>
+              </div>
+            )}
+            {analysisState && analysisState.layer2.keywords.length > 0 && (
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] text-slate-400 font-bold">KEYWORDS:</span>
+                {analysisState.layer2.keywords.slice(0, 5).map((keyword, idx) => (
+                  <span key={idx} className="px-2 py-0.5 bg-blue-600/20 border border-blue-600/30 text-blue-400 text-[9px] font-bold rounded">
+                    {keyword}
+                  </span>
+                ))}
+              </div>
+            )}
+            {analysisState && analysisState.layer3.deepAnalysis && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="px-2 py-1 bg-purple-600/20 border border-purple-600/30 text-purple-400 text-[10px] font-bold rounded">
+                  🔬 SPECIALIST ANALYSIS AVAILABLE
                 </span>
               </div>
             )}
             <p className="text-[10px] text-slate-500 mt-2 italic">
-              Auto-updating every 12 seconds during active analysis
+              3-Layer Smart Funnel: MediaPipe (30 FPS) → Gemini (Rate Limited) → NVIDIA/Grok (On-Demand)
             </p>
           </div>
         </div>
@@ -322,13 +459,21 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
           <div className="flex items-center gap-3">
             <button
               onClick={isAnalyzing ? stopAnalysis : startAnalysis}
+              disabled={videoSource?.type === 'youtube'}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all shadow-lg ${
-                isAnalyzing
+                videoSource?.type === 'youtube'
+                  ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                  : isAnalyzing
                   ? 'bg-red-600 hover:bg-red-500 text-white'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}
             >
-              {isAnalyzing ? (
+              {videoSource?.type === 'youtube' ? (
+                <>
+                  <Brain size={16} />
+                  Analysis Unavailable
+                </>
+              ) : isAnalyzing ? (
                 <>
                   <Pause size={16} />
                   Stop Analysis
@@ -341,7 +486,12 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
               )}
             </button>
 
-            {isAnalyzing && (
+            {videoSource?.type === 'youtube' && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-600/20 border border-amber-600/30 rounded-lg">
+                <span className="text-xs font-bold text-amber-400">🚧 Upload local video for AI analysis</span>
+              </div>
+            )}
+            {isAnalyzing && videoSource?.type === 'local' && (
               <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-600/20 border border-blue-600/30 rounded-lg">
                 <Brain className="text-blue-400 animate-pulse" size={16} />
                 <span className="text-xs font-bold text-blue-400">AI ANALYZING</span>
@@ -350,27 +500,31 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
           </div>
 
           {/* Stats Display */}
-          {analysisStats.analysisCount > 0 && (
+          {analysisState && (
             <div className="flex items-center gap-6">
               <div className="text-center">
-                <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Frames Analyzed</p>
-                <p className="text-lg font-black text-white">{analysisStats.frameCount}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Frames Processed</p>
+                <p className="text-lg font-black text-white">{analysisState.stats.totalFramesProcessed}</p>
               </div>
               <div className="text-center">
-                <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">AI Cycles</p>
-                <p className="text-lg font-black text-white">{analysisStats.analysisCount}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Grok Calls</p>
+                <p className="text-lg font-black text-white">{analysisState.stats.grokCallsMade}</p>
               </div>
               <div className="text-center">
-                <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Last Update</p>
-                <p className="text-sm font-bold text-emerald-400">{analysisStats.lastAnalysis || 'N/A'}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">NVIDIA Calls</p>
+                <p className="text-lg font-black text-white">{analysisState.stats.nvidiaCallsMade}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-[10px] text-slate-500 font-bold uppercase mb-0.5">Auto Triggers</p>
+                <p className="text-lg font-black text-emerald-400">{analysisState.stats.autoTriggersDetected}</p>
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Video Player */}
-      <div className="flex-1 min-h-0 bg-black">
+      {/* Video Player with Detection Overlay */}
+      <div className="flex-1 min-h-0 bg-black relative">
         <video
           ref={videoRef}
           className="w-full h-full object-contain"
@@ -384,6 +538,12 @@ const LiveFeedPlayer: React.FC<LiveFeedPlayerProps> = ({
           <source src={videoSource.url} type="video/ogg" />
           Your browser does not support the video tag.
         </video>
+        {/* MediaPipe Detection Overlay Canvas */}
+        <canvas
+          ref={overlayCanvasRef}
+          className="absolute top-0 left-0 w-full h-full pointer-events-none"
+          style={{ mixBlendMode: 'screen' }}
+        />
       </div>
     </div>
   );

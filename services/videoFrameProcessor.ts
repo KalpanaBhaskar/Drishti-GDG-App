@@ -49,13 +49,13 @@ export class VideoFrameProcessor {
     // Process frame immediately at 0s
     this.captureFrame();
 
-    // OPTIMIZED: Process every 12 seconds to stay under 10 API calls/min
-    // This gives 5 API calls per minute (0s, 12s, 24s, 36s, 48s)
+    // DRISHTI: Process every 10 seconds for 10-second batch analysis
+    // This gives 6 API calls per minute (0s, 10s, 20s, 30s, 40s, 50s)
     this.processingInterval = setInterval(() => {
       this.captureFrame();
-    }, 12000);
+    }, 10000);
 
-    console.log('✅ Video frame processing started (every 12 seconds - optimized for API quota)');
+    console.log('✅ Video frame processing started (every 10 seconds - Drishti 10-second batches)');
   }
 
   /**

@@ -244,8 +244,17 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []); // Empty dependency - only run once on mount
 
-  // Auto-refresh AI Summary every 10 seconds for AI Summary tab
+  // Track video analysis status - used to prevent auto-refresh from overwriting live summaries
+  const [isVideoAnalysisActive, setIsVideoAnalysisActive] = useState(false);
+
+  // Auto-refresh AI Summary every 10 seconds ONLY when video analysis is NOT active
   useEffect(() => {
+    // Skip auto-refresh if video analysis is providing live summaries
+    if (isVideoAnalysisActive) {
+      console.log('⏸️ Auto-refresh paused - video analysis is active');
+      return;
+    }
+
     const fetchAISummary = async () => {
       if (zones.length === 0 && incidents.length === 0) {
         setAiSummaryText('Welcome to the Drishti AI Crowd Safety System. The event monitoring dashboard is ready. AI analysis will begin once the administrator configures a video source and starts live monitoring. Current system status: Standby mode. All safety protocols are active and ready to deploy.');
@@ -273,7 +282,7 @@ const App: React.FC = () => {
     const interval = setInterval(fetchAISummary, 10000);
 
     return () => clearInterval(interval);
-  }, [zones, incidents]);
+  }, [zones, incidents, isVideoAnalysisActive]);
 
   // Initialize Firebase listeners for real-time data
   useEffect(() => {
@@ -344,8 +353,9 @@ const App: React.FC = () => {
       setVideoSource(video);
     });
 
-    // Listen to complaints in real-time
+    // Listen to complaints in real-time - synced to both public and admin dashboards
     const unsubscribeComplaints = listenToComplaints((updatedComplaints) => {
+      console.log('📝 Complaints updated from Firebase:', updatedComplaints.length);
       setComplaints(updatedComplaints);
     });
 
@@ -358,9 +368,6 @@ const App: React.FC = () => {
       unsubscribeComplaints();
     };
   }, []); // FIXED: Empty dependency array - only initialize once
-
-  // Track video analysis status - tactical map ONLY updates from live feed
-  const [isVideoAnalysisActive, setIsVideoAnalysisActive] = useState(false);
 
   // REMOVED: Zone simulation disabled - tactical map only shows data from live video analysis
   // Zones will only be updated when:
@@ -742,6 +749,11 @@ const App: React.FC = () => {
                   onAttendeeCountUpdate={(count) => {
                     console.log('👥 Attendee count updated:', count);
                     setAttendeeCount(count);
+                  }}
+                  onAiSummaryUpdate={(summary, timestamp) => {
+                    console.log('🤖 AI Summary updated:', summary);
+                    setAiSummaryText(summary);
+                    setAiSummaryLastUpdate(timestamp);
                   }}
                 />
               ) : dashboardView === 'live-feed' && userRole === 'public' ? (
